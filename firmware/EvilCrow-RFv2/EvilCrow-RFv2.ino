@@ -17,20 +17,14 @@
 
 SPIClass sdspi(VSPI);
 
-// Config SSID, password and channel
-const char* ssid = "Evil Crow RF v2";  // Enter your SSID here
-const char* password = "123456789";  //Enter your Password here
-const int wifi_channel = 12; //Enter your preferred Wi-Fi Channel
+// Wifi parameters
+const char* ssid = "Evil Crow RF v2";
+const char* password = "123456789";
+const int wifi_channel = 12;
 
 // HTML and CSS style
-//const String MENU = "<body><p>Evil Crow RF v1.0</p><div id=\"header\"><body><nav id='menu'><input type='checkbox' id='responsive-menu' onclick='updatemenu()'><label></label><ul><li><a href='/'>Home</a></li><li><a class='dropdown-arrow'>Config</a><ul class='sub-menus'><li><a href='/txconfig'>RAW TX Config</a></li><li><a href='/txbinary'>Binary TX Config</a></li><li><a href='/rxconfig'>RAW RX Config</a></li><li><a href='/btnconfig'>Button TX Config</a></li></ul></li><li><a class='dropdown-arrow'>RX Log</a><ul class='sub-menus'><li><a href='/viewlog'>RX Logs</a></li><li><a href='/delete'>Delete Logs</a></li><li><a href='/downloadlog'>Download Logs</a></li><li><a href='/cleanspiffs'>Clean SPIFFS</a></li></ul></li><li><a class='dropdown-arrow'>URH Protocol</a><ul class='sub-menus'><li><a href='/txprotocol'>TX Protocol</a></li><li><a href='/listxmlfiles'>List Protocol</a></li><li><a href='/uploadxmlfiles'>Upload Protocol</a></li><li><a href='/cleanspiffs'>Clean SPIFFS</a></li></ul></li><li><a href='/jammer'>Simple Jammer</a></li><li><a href='/update'>OTA Update</a></li></ul></nav><br></div>";
 const String HTML_CSS_STYLING = "<html><head><meta charset=\"utf-8\"><title>Evil Crow RF</title><link rel=\"stylesheet\" href=\"style.css\"><script src=\"lib.js\"></script></head>";
 
-//Pushbutton Pins
-int push1 = 34;
-int push2 = 35;
-
-int led = 32;
 static unsigned long Blinktime = 0;
 
 int error_toleranz = 200;
@@ -39,6 +33,7 @@ int RXPin = 26;
 int RXPin0 = 4;
 int TXPin0 = 2;
 int Gdo0 = 25;
+
 const int minsample = 30;
 unsigned long sample[samplesize];
 unsigned long samplesmooth[samplesize];
@@ -76,8 +71,6 @@ String tmp_transmissions;
 int counter=0;
 int pos = 0;
 int transmissions;
-int pushbutton1 = 0;
-int pushbutton2 = 0;
 byte jammer[11] = {0xff,0xff,};
 
 //BTN Sending Config
@@ -265,56 +258,35 @@ void appendFile(fs::FS &fs, const char * path, const char * message, String mess
 
   logs = fs.open(path, FILE_APPEND);
   if(!logs){
-    //Serial.println("Failed to open file for appending");
     return;
   }
-  if(logs.print(message)|logs.print(messagestring)){
-    //Serial.println("Message appended");
-  } else {
-    //Serial.println("Append failed");
-  }
+  logs.print(message);
+  logs.print(messagestring);
   logs.close();
 }
 
 void appendFileLong(fs::FS &fs, const char * path, unsigned long messagechar){
-  //Serial.printf("Appending to file: %s\n", path);
 
   logs = fs.open(path, FILE_APPEND);
   if(!logs){
-    //Serial.println("Failed to open file for appending");
     return;
   }
-  if(logs.print(messagechar)){
-    //Serial.println("Message appended");
-  } else {
-    //Serial.println("Append failed");
-  }
+  logs.print(messagechar);
   logs.close();
 }
 
 void deleteFile(fs::FS &fs, const char * path){
-  //Serial.printf("Deleting file: %s\n", path);
-  if(fs.remove(path)){
-    //Serial.println("File deleted");
-  } else {
-    //Serial.println("Delete failed");
-  }
+  fs.remove(path);
 }
 
 void readFile(fs::FS &fs, String path){
-  //Serial.printf("Reading file: %s\n", path);
 
   File file = fs.open(path);
   if(!file){
-    //Serial.println("Failed to open file for reading");
     return;
   }
-
-  //Serial.print("Read from file: ");
   while(file.available()){
     bindataprotocol = file.readString();
-    //Serial.println("");
-    //Serial.println(bindataprotocol);
   }
   file.close();
 }
@@ -324,19 +296,14 @@ void removeDir(fs::FS &fs, const char * dirname){
 
   File root = fs.open(dirname);
   if(!root){
-    //Serial.println("Failed to open directory");
     return;
   }
   if(!root.isDirectory()){
-    //Serial.println("Not a directory");
     return;
   }
 
   File file = root.openNextFile();
-  while(file){
-    //Serial.print(file.name());
-    //Serial.println("");
-    
+  while(file){   
     if(file.isDirectory()){
       deleteFile(SD, file.name());
     } else {
@@ -510,11 +477,8 @@ void sendByte(uint8_t dataByte) {
 void power_management(){
   EEPROM.begin(eepromsize);
 
-  pinMode(push2, INPUT);
-  pinMode(led, OUTPUT);
-
   byte z = EEPROM.read(eepromsize-2);
-  if (digitalRead(push2) != LOW){
+  if (digitalRead(BUTTON2) != LOW){
     if (z == 1){
       go_deep_sleep();
     }
@@ -542,19 +506,19 @@ void go_deep_sleep(){
 
 void led_blink(int blinkrep,int blinktimer){
   for (int i = 0; i<blinkrep; i++){
-    digitalWrite(led, HIGH);
+    digitalWrite(LED, HIGH);
     delay(blinktimer);
-    digitalWrite(led, LOW);
+    digitalWrite(LED, LOW);
     delay(blinktimer);
   }
 }
 
 void poweron_blink(){
   if (millis()-Blinktime > 10000){
-    digitalWrite(led, LOW);
+    digitalWrite(LED, LOW);
   }
   if (millis()-Blinktime > 10100){
-    digitalWrite(led, HIGH);
+    digitalWrite(LED, HIGH);
     Blinktime = millis();
   }
 }
@@ -566,6 +530,9 @@ void force_reset() {
 }
 
 void setup() {
+  pinMode(LED, OUTPUT);
+  pinMode(BUTTON1, INPUT);
+  pinMode(BUTTON2, INPUT);
 
   Serial.begin(38400);
   power_management();
@@ -601,8 +568,6 @@ void setup() {
 
   sdspi.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_SS);
   SD.begin(SD_SS, sdspi);
-  pinMode(push1, INPUT);
-  pinMode(push2, INPUT);
 
   controlserver.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(SD, "/HTML/index.html", "text/html");
@@ -693,17 +658,14 @@ void setup() {
       frequency = tmp_frequency.toFloat();
       power_jammer = tmp_powerjammer.toInt();
 
-      //Serial.println("Start");
-
       if (tmp_module == "1") {
-        pinMode(2,OUTPUT);
+        pinMode(MOD0_GDO0,OUTPUT);
         ELECHOUSE_cc1101.setModul(0);
         ELECHOUSE_cc1101.Init();
         ELECHOUSE_cc1101.setModulation(2);
         ELECHOUSE_cc1101.setMHZ(frequency);
         ELECHOUSE_cc1101.setPA(power_jammer);
         ELECHOUSE_cc1101.SetTx();
-        //Serial.println("Module 1");
       }
       
       if (tmp_module == "2") {
@@ -714,11 +676,7 @@ void setup() {
         ELECHOUSE_cc1101.setMHZ(frequency);
         ELECHOUSE_cc1101.setPA(power_jammer);
         ELECHOUSE_cc1101.SetTx();
-        //Serial.println("Module 2");
       }
-      //sdspi.end();
-      //sdspi.begin(18, 19, 23, 22);
-      //SD.begin(22, sdspi);
       jammer_tx = "1"; 
       request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Jammer OK\")</script>");
     }  
@@ -750,13 +708,12 @@ void setup() {
       }
 
       if (tmp_module == "1") {
-        pinMode(2,OUTPUT);
+        pinMode(MOD0_GDO0,OUTPUT);
         ELECHOUSE_cc1101.setModul(0);
         ELECHOUSE_cc1101.Init();
         ELECHOUSE_cc1101.setModulation(mod);
         ELECHOUSE_cc1101.setMHZ(frequency);
         ELECHOUSE_cc1101.setDeviation(deviation);
-        //delay(400);
         ELECHOUSE_cc1101.SetTx();
 
         for (int r = 0; r<transmissions; r++) {
@@ -779,7 +736,6 @@ void setup() {
         ELECHOUSE_cc1101.setModulation(mod);
         ELECHOUSE_cc1101.setMHZ(frequency);
         ELECHOUSE_cc1101.setDeviation(deviation);
-        //delay(400);
         ELECHOUSE_cc1101.SetTx();
 
         for (int r = 0; r<transmissions; r++) {
@@ -797,9 +753,6 @@ void setup() {
        Serial.println();
        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
        ELECHOUSE_cc1101.setSidle();
-       //sdspi.end();
-       //sdspi.begin(18, 19, 23, 22);
-       //SD.begin(22, sdspi);
     }
   });
 
@@ -871,13 +824,12 @@ void setup() {
       }
 
       if (tmp_module == "1") {
-        pinMode(2,OUTPUT);
+        pinMode(MOD0_GDO0,OUTPUT);
         ELECHOUSE_cc1101.setModul(0);
         ELECHOUSE_cc1101.Init();
         ELECHOUSE_cc1101.setModulation(mod);
         ELECHOUSE_cc1101.setMHZ(frequency);
         ELECHOUSE_cc1101.setDeviation(deviation);
-        //delay(400);
         ELECHOUSE_cc1101.SetTx();
 
         delay(1000);
@@ -900,7 +852,6 @@ void setup() {
         ELECHOUSE_cc1101.setModulation(mod);
         ELECHOUSE_cc1101.setMHZ(frequency);
         ELECHOUSE_cc1101.setDeviation(deviation);
-        //delay(400);
         ELECHOUSE_cc1101.SetTx();  
 
         delay(1000);
@@ -917,9 +868,6 @@ void setup() {
       }
       request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
       ELECHOUSE_cc1101.setSidle();
-      //sdspi.end();
-      //sdspi.begin(18, 19, 23, 22);
-      //SD.begin(22, sdspi);
     }
   });
 
@@ -947,7 +895,6 @@ void setup() {
       }
 
       readFile(SD, tmp_xmlname);
-      //readFile(SD, "/URH/protocol.proto.xml");
       parse_data();
 
       int count_binconvert=0;
@@ -978,13 +925,12 @@ void setup() {
         Serial.print(",");
       }
 
-      pinMode(2,OUTPUT);
+      pinMode(MOD0_GDO0,OUTPUT);
       ELECHOUSE_cc1101.setModul(0);
       ELECHOUSE_cc1101.Init();
       ELECHOUSE_cc1101.setModulation(mod);
       ELECHOUSE_cc1101.setMHZ(frequency);
       ELECHOUSE_cc1101.setDeviation(deviation);
-      //delay(400);
       ELECHOUSE_cc1101.SetTx();
 
       delay(1000);
@@ -1003,8 +949,6 @@ void setup() {
 
   controlserver.on("/setrx", HTTP_POST, [](AsyncWebServerRequest *request){
     tmp_module = request->arg("module");
-    //Serial.print("Module: ");
-    //Serial.println(tmp_module);
     tmp_frequency = request->arg("frequency");
     tmp_setrxbw = request->arg("setrxbw");
     tmp_mod = request->arg("mod");
@@ -1014,8 +958,6 @@ void setup() {
       frequency = tmp_frequency.toFloat();
       setrxbw = tmp_setrxbw.toFloat();
       mod = tmp_mod.toInt();
-      //Serial.print("Modulation: ");
-      //Serial.println(mod);
       deviation = tmp_deviation.toFloat();
       datarate = tmp_datarate.toInt();
 
@@ -1035,23 +977,19 @@ void setup() {
         if(mod == 0) {
           ELECHOUSE_cc1101.setDcFilterOff(1);
         }
-        //Serial.println("Module 2");
       }
 
-      ELECHOUSE_cc1101.setSyncMode(0);        // Combined sync-word qualifier mode. 0 = No preamble/sync. 1 = 16 sync word bits detected. 2 = 16/16 sync word bits detected. 3 = 30/32 sync word bits detected. 4 = No preamble/sync, carrier-sense above threshold. 5 = 15/16 + carrier-sense above threshold. 6 = 16/16 + carrier-sense above threshold. 7 = 30/32 + carrier-sense above threshold.
-      ELECHOUSE_cc1101.setPktFormat(3);       // Format of RX and TX data. 0 = Normal mode, use FIFOs for RX and TX. 1 = Synchronous serial mode, Data in on GDO0 and data out on either of the GDOx pins. 2 = Random TX mode; sends random data using PN9 generator. Used for test. Works as normal mode, setting 0 (00), in RX. 3 = Asynchronous serial mode, Data in on GDO0 and data out on either of the GDOx pins.
+      ELECHOUSE_cc1101.setSyncMode(0);            // Combined sync-word qualifier mode. 0 = No preamble/sync. 1 = 16 sync word bits detected. 2 = 16/16 sync word bits detected. 3 = 30/32 sync word bits detected. 4 = No preamble/sync, carrier-sense above threshold. 5 = 15/16 + carrier-sense above threshold. 6 = 16/16 + carrier-sense above threshold. 7 = 30/32 + carrier-sense above threshold.
+      ELECHOUSE_cc1101.setPktFormat(3);           // Format of RX and TX data. 0 = Normal mode, use FIFOs for RX and TX. 1 = Synchronous serial mode, Data in on GDO0 and data out on either of the GDOx pins. 2 = Random TX mode; sends random data using PN9 generator. Used for test. Works as normal mode, setting 0 (00), in RX. 3 = Asynchronous serial mode, Data in on GDO0 and data out on either of the GDOx pins.
 
-      ELECHOUSE_cc1101.setModulation(mod);      // set modulation mode. 0 = 2-FSK, 1 = GFSK, 2 = ASK/OOK, 3 = 4-FSK, 4 = MSK.
+      ELECHOUSE_cc1101.setModulation(mod);        // set modulation mode. 0 = 2-FSK, 1 = GFSK, 2 = ASK/OOK, 3 = 4-FSK, 4 = MSK.
       ELECHOUSE_cc1101.setRxBW(setrxbw);
       ELECHOUSE_cc1101.setMHZ(frequency);
       ELECHOUSE_cc1101.setDeviation(deviation);   // Set the Frequency deviation in kHz. Value from 1.58 to 380.85. Default is 47.60 kHz.
-      ELECHOUSE_cc1101.setDRate(datarate);           // Set the Data Rate in kBaud. Value from 0.02 to 1621.83. Default is 99.97 kBaud!
+      ELECHOUSE_cc1101.setDRate(datarate);        // Set the Data Rate in kBaud. Value from 0.02 to 1621.83. Default is 99.97 kBaud!
 
       enableReceive();
       raw_rx = "1";
-      //sdspi.end();
-      //sdspi.begin(18, 19, 23, 22);
-      //SD.begin(22, sdspi);
       request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"RX Config OK\")</script>");
     }
   });
@@ -1107,8 +1045,6 @@ void setup() {
     if (btn_set_int == 1){
       btn1_frequency = request->arg("frequency");
       tmp_btn1_tesla_frequency = btn1_frequency.toFloat();
-      //Serial.print("Freq: ");
-      //Serial.println(btn1_frequency);
       btn1tesla = "1";
     }
     
@@ -1342,11 +1278,7 @@ void signalanalyse(){
 }
 
 void loop() {
-  
   poweron_blink();
-  
-  pushbutton1 = digitalRead(push1);
-  pushbutton2 = digitalRead(push2);
 
   if(raw_rx == "1") {
     if(checkReceived()){
@@ -1354,9 +1286,6 @@ void loop() {
       signalanalyse();
       enableReceive();
       delay(200);
-      //sdspi.end();
-      //sdspi.begin(18, 19, 23, 22);
-      //SD.begin(22, sdspi);
       delay(500);
     }
   }
@@ -1382,7 +1311,7 @@ void loop() {
     }
   }
 
-  if (pushbutton1 == LOW) {
+  if (digitalRead(BUTTON1) == LOW) {
     if (btn1tesla == "1") {
       sendSignalsBT1();
     } else {
@@ -1397,7 +1326,6 @@ void loop() {
     ELECHOUSE_cc1101.setModulation(tmp_btn1_mod);
     ELECHOUSE_cc1101.setMHZ(tmp_btn1_frequency);
     ELECHOUSE_cc1101.setDeviation(tmp_btn1_deviation);
-    //delay(400);
     ELECHOUSE_cc1101.SetTx();
 
     for (int r = 0; r<tmp_btn1_transmission; r++) {
@@ -1416,7 +1344,7 @@ void loop() {
   }
   }
 
-  if (pushbutton2 == LOW) {
+  if (digitalRead(BUTTON2) == LOW) {
     if (btn2tesla == "1") {
       sendSignalsBT2();
     } else {
