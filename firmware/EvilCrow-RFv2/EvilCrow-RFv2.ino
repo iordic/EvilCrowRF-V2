@@ -1,10 +1,11 @@
+#include "config.h"
+
 #include "ELECHOUSE_CC1101_SRC_DRV.h"
 #include <WiFiClient.h> 
 #include <WiFi.h>
 #include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include <ESPAsyncWebSrv.h>
 #include <AsyncElegantOTA.h>
-#define DEST_FS_USES_SD
 #include <ESP32-targz.h>
 #include <SPIFFSEditor.h>
 #include <EEPROM.h>
@@ -14,23 +15,7 @@
 #include "FS.h"
 #include "SD.h"
 
-#define eepromsize 4096
-#define samplesize 2000
-
-#define SD_SCLK 18
-#define SD_MISO 19
-#define SD_MOSI 23
-#define SD_SS   22
-
 SPIClass sdspi(VSPI);
-
-#if defined(ESP8266)
-    #define RECEIVE_ATTR ICACHE_RAM_ATTR
-#elif defined(ESP32)
-    #define RECEIVE_ATTR IRAM_ATTR
-#else
-    #define RECEIVE_ATTR
-#endif
 
 // Config SSID, password and channel
 const char* ssid = "Evil Crow RF v2";  // Enter your SSID here
@@ -613,9 +598,9 @@ void setup() {
   }
   
   delay(2000);
-  
-  sdspi.begin(18, 19, 23, 22);
-  SD.begin(22, sdspi);
+
+  sdspi.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_SS);
+  SD.begin(SD_SS, sdspi);
   pinMode(push1, INPUT);
   pinMode(push2, INPUT);
 
@@ -1194,8 +1179,8 @@ void setup() {
   AsyncElegantOTA.begin(&controlserver);
   controlserver.begin();
 
-  ELECHOUSE_cc1101.addSpiPin(14, 12, 13, 5, 0);
-  ELECHOUSE_cc1101.addSpiPin(14, 12, 13, 27, 1);
+  ELECHOUSE_cc1101.addSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, CC1101_SS0, 0); // (0) first module
+  ELECHOUSE_cc1101.addSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, CC1101_SS1, 1); // (1) second module
   appendFile(SD, "/logs.txt","Viewlog:\n", "<br>\n");
 }
 
