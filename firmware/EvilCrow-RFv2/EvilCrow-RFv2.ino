@@ -14,8 +14,12 @@
 #include <WiFiAP.h>
 #include "FS.h"
 #include "SD.h"
+#include "AsyncJson.h"
+#include "ArduinoJson.h"  // install from library manager
 
 SPIClass sdspi(VSPI);
+
+StaticJsonDocument<1024> jsonDoc;
 
 // Wifi parameters
 const char* ssid = "Evil Crow RF v2";
@@ -23,28 +27,21 @@ const char* password = "123456789";
 const int wifi_channel = 12;
 
 // HTML and CSS style
-const String HTML_CSS_STYLING = "<html><head><meta charset=\"utf-8\"><title>Evil Crow RF</title><link rel=\"stylesheet\" href=\"style.css\"><script src=\"lib.js\"></script></head>";
+const String HTML_CSS_STYLING = "<html><head><meta charset=\"utf-8\"><title>Evil Crow RF</title>" \
+                                "<link rel=\"stylesheet\" href=\"style.css\"><script src=\"lib.js\"></script></head>";
 
 static unsigned long Blinktime = 0;
 
-int error_toleranz = 200;
-
-int RXPin = 26;
-int RXPin0 = 4;
-int TXPin0 = 2;
-int Gdo0 = 25;
-
-const int minsample = 30;
 unsigned long sample[samplesize];
 unsigned long samplesmooth[samplesize];
 int samplecount;
 static unsigned long lastTime = 0;
 String transmit = "";
-long data_to_send[2000];
-long data_button1[2000];
-long data_button2[2000];
-long data_button3[2000];
-long transmit_push[2000];
+long data_to_send[BUFFER_MAX_SIZE];
+long data_button1[BUFFER_MAX_SIZE];
+long data_button2[BUFFER_MAX_SIZE];
+long data_button3[BUFFER_MAX_SIZE];
+long transmit_push[BUFFER_MAX_SIZE];
 String tmp_module;
 String tmp_frequency;
 String tmp_xmlname;
@@ -62,7 +59,6 @@ float frequency;
 float setrxbw;
 String raw_rx = "0";
 String jammer_tx = "0";
-const bool formatOnFail = true;
 String webString;
 String bindata;
 int samplepulse;
@@ -133,7 +129,7 @@ int jammer_pin;
 File logs;
 File file;
 
-AsyncWebServer controlserver(80);
+AsyncWebServer controlserver(WEB_SERVER_PORT);
 
 void readConfigWiFi(fs::FS &fs, String path){
   File file = fs.open(path);
@@ -226,6 +222,30 @@ void handleUploadSD(AsyncWebServerRequest *request, String filename, size_t inde
   }
 }
 
+void listFiles(fs::FS &fs, const char *dirname, JsonArray *filesJson) {
+    //StaticJsonDocument<256> doc;
+    File root = fs.open(dirname);
+    if (!root || !root.isDirectory()) {
+      return; // error  
+    }
+    File file = root.openNextFile();
+    char buf[256];
+    StaticJsonDocument<256> doc;
+    JsonObject aux = doc.to<JsonObject>();
+    while (file) {      
+      aux["name"] = file.name();
+      if (file.isDirectory()) {
+        aux["type"] = "directory";
+        aux["size"] = 0;
+      } else {
+        aux["type"] = "file";
+        aux["size"] = file.size();        
+      }
+      filesJson->add(aux);
+      file = root.openNextFile();
+    }
+}
+
 void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
   deleteFile(SD, "/dir.txt");
 
@@ -316,9 +336,9 @@ void removeDir(fs::FS &fs, const char * dirname){
 bool checkReceived(void){
   
   delay(1);
-  if (samplecount >= minsample && micros()-lastTime >100000){
-    detachInterrupt(RXPin0);
-    detachInterrupt(RXPin);
+  if (samplecount >= MIN_SAMPLE && micros()-lastTime >100000){
+    detachInterrupt(MOD0_GDO2);
+    detachInterrupt(MOD1_GDO2);
     return 1;
   }else{
     return 0;
@@ -359,13 +379,13 @@ void RECEIVE_ATTR receiver() {
   }
 
   if (samplecount>=samplesize){
-    detachInterrupt(RXPin0);
-    detachInterrupt(RXPin);
+    detachInterrupt(MOD0_GDO2);
+    detachInterrupt(MOD1_GDO2);
     checkReceived();
   }
 
   if (mod == 0 && tmp_module == "2") {
-    if (samplecount == 1 and digitalRead(RXPin) != HIGH){
+    if (samplecount == 1 and digitalRead(MOD1_GDO2) != HIGH){
       samplecount = 0;
     }
   }
@@ -374,16 +394,14 @@ void RECEIVE_ATTR receiver() {
 }
 
 void enableReceive(){
-  pinMode(RXPin0,INPUT);
-  RXPin0 = digitalPinToInterrupt(RXPin0);
+  pinMode(MOD0_GDO2,INPUT);
   ELECHOUSE_cc1101.SetRx();
   samplecount = 0;
-  attachInterrupt(RXPin0, receiver, CHANGE);
-  pinMode(RXPin,INPUT);
-  RXPin = digitalPinToInterrupt(RXPin);
+  attachInterrupt(digitalPinToInterrupt(MOD0_GDO2), receiver, CHANGE);
+  pinMode(MOD1_GDO2,INPUT);
   ELECHOUSE_cc1101.SetRx();
   samplecount = 0;
-  attachInterrupt(RXPin, receiver, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(MOD1_GDO2), receiver, CHANGE);
 }
 
 void parse_data() {
@@ -420,7 +438,7 @@ void parse_data() {
 }
 
 void sendSignals() {
-  pinMode(TXPin0,OUTPUT);
+  pinMode(MOD0_GDO0,OUTPUT);
   ELECHOUSE_cc1101.setModul(0);
   ELECHOUSE_cc1101.Init();
   ELECHOUSE_cc1101.setModulation(2);
@@ -430,13 +448,13 @@ void sendSignals() {
   
   for (uint8_t t=0; t<transmtesla; t++) {
     for (uint8_t i=0; i<messageLength; i++) sendByte(sequence[i]);
-      digitalWrite(TXPin0, LOW);
+      digitalWrite(MOD0_GDO0, LOW);
       delay(messageDistance);
     }
 }
 
 void sendSignalsBT1() {
-  pinMode(TXPin0,OUTPUT);
+  pinMode(MOD0_GDO0,OUTPUT);
   ELECHOUSE_cc1101.setModul(0);
   ELECHOUSE_cc1101.Init();
   ELECHOUSE_cc1101.setModulation(2);
@@ -446,13 +464,13 @@ void sendSignalsBT1() {
   
   for (uint8_t t=0; t<transmtesla; t++) {
     for (uint8_t i=0; i<messageLength; i++) sendByte(sequence[i]);
-      digitalWrite(TXPin0, LOW);
+      digitalWrite(MOD0_GDO0, LOW);
       delay(messageDistance);
     }
 }
 
 void sendSignalsBT2() {
-  pinMode(TXPin0,OUTPUT);
+  pinMode(MOD0_GDO0,OUTPUT);
   ELECHOUSE_cc1101.setModul(0);
   ELECHOUSE_cc1101.Init();
   ELECHOUSE_cc1101.setModulation(2);
@@ -462,14 +480,14 @@ void sendSignalsBT2() {
   
   for (uint8_t t=0; t<transmtesla; t++) {
     for (uint8_t i=0; i<messageLength; i++) sendByte(sequence[i]);
-      digitalWrite(TXPin0, LOW);
+      digitalWrite(MOD0_GDO0, LOW);
       delay(messageDistance);
     }
 }
 
 void sendByte(uint8_t dataByte) {
   for (int8_t bit=7; bit>=0; bit--) { // MSB
-    digitalWrite(TXPin0, (dataByte & (1 << bit)) != 0 ? HIGH : LOW);
+    digitalWrite(MOD0_GDO0, (dataByte & (1 << bit)) != 0 ? HIGH : LOW);
     delayMicroseconds(pulseWidth);
   }
 }
@@ -534,10 +552,10 @@ void setup() {
   pinMode(BUTTON1, INPUT);
   pinMode(BUTTON2, INPUT);
 
-  Serial.begin(38400);
+  Serial.begin(SERIAL_BAUDRATE);
   power_management();
 
-  SPIFFS.begin(formatOnFail);
+  SPIFFS.begin(FORMAT_ON_FAIL);
 
   readConfigWiFi(SPIFFS,"/configwifi.txt");
   ssid_new = tmp_config1;
@@ -564,58 +582,27 @@ void setup() {
     } 
   }
   
-  delay(2000);
+  delay(DELAY_BETWEEN_RETRANSMISSIONS);
 
   sdspi.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_SS);
   SD.begin(SD_SS, sdspi);
 
-  controlserver.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/index.html", "text/html");
-  });
+  /* ENDPOINTS */
+  controlserver.serveStatic("/", SD, "/HTML/").setDefaultFile("index.html");
 
-  controlserver.on("/rxconfig", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/rxconfig.html", "text/html");
-  });
+  controlserver.on("/files", HTTP_GET, [](AsyncWebServerRequest *request) {
+    StaticJsonDocument<1024> jsonDoc;
+    JsonArray jsonFilesArray = jsonDoc.to<JsonArray>();
+    listFiles(SD, "/HTML", &jsonFilesArray);
+    char buf[1024];
+    serializeJson(jsonDoc, buf);
+    serializeJson(jsonDoc, Serial);
 
-  controlserver.on("/txconfig", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/txconfig.html", "text/html");
+    request->send(HTTP_OK, "application/json", buf);
   });
-
-  controlserver.on("/txprotocol", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/txprotocol.html", "text/html");
-  });
-
-  controlserver.on("/txbinary", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/txbinary.html", "text/html");
-  });
-
-  controlserver.on("/btnconfig", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/btn3.html", "text/html");
-  });
-
-  controlserver.on("/wificonfig", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/wificonfig.html", "text/html");
-  });
-
-  controlserver.on("/btnconfigtesla", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/btnconfigtesla.html", "text/html");
-  });
-
-  controlserver.on("/txprotocol", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/txprotocol.html", "text/html");
-  });
-
-  controlserver.on("/updatesd", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/updatesd.html", "text/html");
-  });
-
   controlserver.on("/listxmlfiles", HTTP_GET, [](AsyncWebServerRequest *request) {
     listDir(SD, "/URH", 0);
     request->send(SD, "/dir.txt", "text/html");
-  });
-
-  controlserver.on("/uploadxmlfiles", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/uploadxmlfiles.html", "text/html");
   });
 
   controlserver.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -623,14 +610,6 @@ void setup() {
 
   controlserver.on("/uploadsd", HTTP_POST, [](AsyncWebServerRequest *request) {
         request->send(200); }, handleUploadSD);
-
-  controlserver.on("/jammer", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/jammer.html", "text/html");
-  });
-
-  controlserver.on("/txtesla", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/txtesla.html", "text/html");
-  });
 
   controlserver.on("/stopjammer", HTTP_POST, [](AsyncWebServerRequest *request){
     jammer_tx = "0";
@@ -669,7 +648,7 @@ void setup() {
       }
       
       if (tmp_module == "2") {
-        pinMode(25,OUTPUT);
+        pinMode(MOD1_GDO0,OUTPUT);
         ELECHOUSE_cc1101.setModul(1);
         ELECHOUSE_cc1101.Init();
         ELECHOUSE_cc1101.setModulation(2);
@@ -718,19 +697,19 @@ void setup() {
 
         for (int r = 0; r<transmissions; r++) {
           for (int i = 0; i<counter; i+=2){
-            digitalWrite(2,HIGH);
+            digitalWrite(MOD0_GDO0,HIGH);
             delayMicroseconds(data_to_send[i]);
-            digitalWrite(2,LOW);
+            digitalWrite(MOD0_GDO0,LOW);
             delayMicroseconds(data_to_send[i+1]);
             Serial.print(data_to_send[i]);
             Serial.print(",");
           }
-          delay(2000); //Set this for the delay between retransmissions
+          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
         }        
       }
 
       else if (tmp_module == "2") {
-        pinMode(25,OUTPUT);
+        pinMode(MOD1_GDO0,OUTPUT);
         ELECHOUSE_cc1101.setModul(1);
         ELECHOUSE_cc1101.Init();
         ELECHOUSE_cc1101.setModulation(mod);
@@ -740,14 +719,14 @@ void setup() {
 
         for (int r = 0; r<transmissions; r++) {
           for (int i = 0; i<counter; i+=2){
-            digitalWrite(25,HIGH);
+            digitalWrite(MOD1_GDO0,HIGH);
             delayMicroseconds(data_to_send[i]);
-            digitalWrite(25,LOW);
+            digitalWrite(MOD1_GDO0,LOW);
             delayMicroseconds(data_to_send[i+1]);
             Serial.print(data_to_send[i]);
             Serial.print(",");
           }
-          delay(2000); //Set this for the delay between retransmissions
+          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
         }
       }     
        Serial.println();
@@ -836,17 +815,17 @@ void setup() {
 
         for (int r = 0; r<transmissions; r++) {
           for (int i = 0; i<count_binconvert; i+=2){
-            digitalWrite(2,HIGH);
+            digitalWrite(MOD0_GDO0,HIGH);
             delayMicroseconds(data_to_send[i]);
-            digitalWrite(2,LOW);
+            digitalWrite(MOD0_GDO0,LOW);
             delayMicroseconds(data_to_send[i+1]);
           }
-          delay(2000); //Set this for the delay between retransmissions    
+          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions    
         }
       }
 
       else if (tmp_module == "2") {
-        pinMode(25,OUTPUT);
+        pinMode(MOD1_GDO0,OUTPUT);
         ELECHOUSE_cc1101.setModul(1);
         ELECHOUSE_cc1101.Init();
         ELECHOUSE_cc1101.setModulation(mod);
@@ -858,12 +837,12 @@ void setup() {
 
         for (int r = 0; r<transmissions; r++) {
           for (int i = 0; i<count_binconvert; i+=2){
-            digitalWrite(25,HIGH);
+            digitalWrite(MOD1_GDO0,HIGH);
             delayMicroseconds(data_to_send[i]);
-            digitalWrite(25,LOW);
+            digitalWrite(MOD1_GDO0,LOW);
             delayMicroseconds(data_to_send[i+1]);
           }
-          delay(2000); //Set this for the delay between retransmissions    
+          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions    
         }
       }
       request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
@@ -902,9 +881,9 @@ void setup() {
 
       for (int i = 0; i<bindata_protocol.length()+1; i++){
         if (lastbit_convert != bindata_protocol.substring(i, i+1)){
-          if (lastbit_convert == "1"){
+          if (lastbit_convert == "1") {
             lastbit_convert="0";
-          }else if (lastbit_convert == "0"){
+          } else if (lastbit_convert == "0") {
             lastbit_convert="1";
           }
           count_binconvert++;
@@ -936,9 +915,9 @@ void setup() {
       delay(1000);
 
       for (int i = 0; i<count_binconvert; i+=2){
-        digitalWrite(2,HIGH);
+        digitalWrite(MOD0_GDO0,HIGH);
         delayMicroseconds(data_to_send[i]);
-        digitalWrite(2,LOW);
+        digitalWrite(MOD0_GDO0,LOW);
         delayMicroseconds(data_to_send[i+1]);
       }
      
@@ -1078,14 +1057,6 @@ void setup() {
     appendFile(SD, "/logs.txt","Viewlog:\n", "<br>\n");
   });
 
-  controlserver.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/style.css", "text/css");
-  });
-
-  controlserver.on("/lib.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SD, "/HTML/javascript.js", "text/javascript");
-  });
-
   controlserver.on("/setwificonfig", HTTP_POST, [](AsyncWebServerRequest *request) {
     String ssid_value = request->arg("ssid");
     String password_value = request->arg("password");
@@ -1103,7 +1074,6 @@ void setup() {
       force_reset();
     }
   });
-
   controlserver.on("/deletewificonfig", HTTP_POST, [](AsyncWebServerRequest *request) {
     if (request->hasArg("configmodule")) {
       deleteFile(SPIFFS, "/configwifi.txt");
@@ -1111,6 +1081,7 @@ void setup() {
       force_reset();
     }
   });
+  /* end section of endpoints */
 
   AsyncElegantOTA.begin(&controlserver);
   controlserver.begin();
@@ -1156,7 +1127,7 @@ void signalanalyse(){
   }
 
   for (int i = 1; i<samplecount; i++){
-    if (sample[i]<signaltimings[p*2]+error_toleranz && sample[i]>signaltimings[p*2+1]){
+    if (sample[i]<signaltimings[p*2] + ERROR_TOLERANZ && sample[i]>signaltimings[p*2+1]){
       signaltimings[p*2+1]=sample[i];
     }
   }
@@ -1295,17 +1266,17 @@ void loop() {
     
     if (tmp_module == "1") {
       for (int i = 0; i<12; i+=2){
-        digitalWrite(2,HIGH);
+        digitalWrite(MOD0_GDO0,HIGH);
         delayMicroseconds(jammer[i]);
-        digitalWrite(2,LOW);
+        digitalWrite(MOD0_GDO0,LOW);
         delayMicroseconds(jammer[i+1]);
       }
     }
     else if (tmp_module == "2") {
       for (int i = 0; i<12; i+=2){
-        digitalWrite(25,HIGH);
+        digitalWrite(MOD1_GDO0,HIGH);
         delayMicroseconds(jammer[i]);
-        digitalWrite(25,LOW);
+        digitalWrite(MOD1_GDO0,LOW);
         delayMicroseconds(jammer[i+1]);
       }
     }
@@ -1320,7 +1291,7 @@ void loop() {
     tmp_btn1_mod = btn1_mod.toInt();
     tmp_btn1_frequency = btn1_frequency.toFloat();
     tmp_btn1_transmission = btn1_transmission.toInt();
-    pinMode(25,OUTPUT);
+    pinMode(MOD1_GDO0,OUTPUT);
     ELECHOUSE_cc1101.setModul(1);
     ELECHOUSE_cc1101.Init();
     ELECHOUSE_cc1101.setModulation(tmp_btn1_mod);
@@ -1330,14 +1301,14 @@ void loop() {
 
     for (int r = 0; r<tmp_btn1_transmission; r++) {
         for (int i = 0; i<counter; i+=2){
-          digitalWrite(25,HIGH);
+          digitalWrite(MOD1_GDO0,HIGH);
           delayMicroseconds(data_button1[i]);
-          digitalWrite(25,LOW);
+          digitalWrite(MOD1_GDO0,LOW);
           delayMicroseconds(data_button1[i+1]);
           Serial.print(data_button1[i]);
           Serial.print(",");
         }
-        delay(2000); //Set this for the delay between retransmissions
+        delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
       }
      Serial.println();
      ELECHOUSE_cc1101.setSidle();
@@ -1353,7 +1324,7 @@ void loop() {
     tmp_btn2_mod = btn2_mod.toInt();
     tmp_btn2_frequency = btn2_frequency.toFloat();
     tmp_btn2_transmission = btn2_transmission.toInt();
-    pinMode(25,OUTPUT);
+    pinMode(MOD1_GDO0,OUTPUT);
     ELECHOUSE_cc1101.setModul(1);
     ELECHOUSE_cc1101.Init();
     ELECHOUSE_cc1101.setModulation(tmp_btn2_mod);
@@ -1363,14 +1334,14 @@ void loop() {
 
     for (int r = 0; r<tmp_btn2_transmission; r++) {
         for (int i = 0; i<counter; i+=2){
-          digitalWrite(25,HIGH);
+          digitalWrite(MOD1_GDO0,HIGH);
           delayMicroseconds(data_button2[i]);
-          digitalWrite(25,LOW);
+          digitalWrite(MOD1_GDO0,LOW);
           delayMicroseconds(data_button2[i+1]);
           Serial.print(data_button2[i]);
           Serial.print(",");
         }
-        delay(2000); //Set this for the delay between retransmissions
+        delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
       }
      Serial.println();
      ELECHOUSE_cc1101.setSidle();
