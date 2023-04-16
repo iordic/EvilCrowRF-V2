@@ -16,6 +16,7 @@ endpoints
 | GET /jammer             | /HTML/jammer.html
 | GET /txtesla            | /HTML/txtesla.html
 | GET /lib.js             | /HTML/javascript.js
+
 | POST /upload            |                                  -> (estandar...)
 | POST /uploadsd          | 
 | POST /stopjammer        | alert(...)                                  ->
@@ -45,3 +46,12 @@ POST /upload -> en parámetros decidir si a la SD o a SPIFFS.
 POST /jammer -> en parámetros decidir si parar, encender y los parámetros de configuración (json).
 POST /tx -> en parámetros la config que puede ser tesla o binario.
 GET /files -> devolver listado con ficheros, además que se puedan leer o ejecutar desde esta lista
+DELETE /files -> borrar un fichero (o lista, ya veremos...)
+
+Apartado config:
+    POST /config/button -> args: n_button, tesla (bool), transmission config...
+    POST /config/wifi ->
+    DELETE /logs
+    DELETE /config/wifi
+    POST /config/rx
+    POST /config/tx
