@@ -17,6 +17,8 @@
 #include "AsyncJson.h"
 #include "ArduinoJson.h"  // install from library manager
 
+#define signalstorage 10
+
 SPIClass sdspi(VSPI);
 
 // Wifi parameters
@@ -39,8 +41,6 @@ long data_to_send[BUFFER_MAX_SIZE];
 long transmit_push[BUFFER_MAX_SIZE];
 String tmp_module;
 String tmp_frequency;
-String tmp_xmlname;
-String tmp_codelen;
 String tmp_setrxbw;
 String tmp_mod;
 int mod;
@@ -54,9 +54,6 @@ float setrxbw;
 String raw_rx = "0";
 String bindata;
 int samplepulse;
-String tmp_samplepulse;
-String tmp_transmissions;
-int counter=0;
 int pos = 0;
 int transmissions;
 byte jammer[11] = {0xff,0xff,};
@@ -108,15 +105,25 @@ struct buttonConfig {
     long data[BUFFER_MAX_SIZE];
 } buttonConfig[2];
 
+struct FZSubSignal {
+    boolean setted;
+    int version;
+    float frequency;
+    int protocol;       // Now: RAW or BinRAW (first format with pulses and second with hex values)
+    int modulation;     // 2-FSK, GFSK, ASK, 4-FSK, MSK
+    int te;
+    int size;
+    int data[FZ_SUB_MAX_SIZE];    
+} fzSubSignal;
+
 // File
 File logs;
 File file;
 
 AsyncWebServer controlserver(WEB_SERVER_PORT);
 
-void readConfigWiFi(fs::FS &fs, String path){
+void readConfigWiFi(fs::FS &fs, String path) {
   File file = fs.open(path);
-  
   if(!file || file.isDirectory()){
     storage_status = 0;
     return;
@@ -134,14 +141,12 @@ void readConfigWiFi(fs::FS &fs, String path){
   file.close();
 }
 
-void writeConfigWiFi(fs::FS &fs, const char * path, String message){
+void writeConfigWiFi(fs::FS &fs, const char * path, String message) {
     File file = fs.open(path, FILE_APPEND);
-    
-    if(!file){
+    if (!file) {
       return;
     }
-    
-    if(file.println(message)){
+    if (file.println(message)) {
     } else {
     }
     file.close();
@@ -151,16 +156,22 @@ void writeConfigWiFi(fs::FS &fs, const char * path, String message){
 void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
   String logmessage = "Client:" + request->client()->remoteIP().toString() + " " + request->url();
 
+  String path = filename;
+  path.toLowerCase();
+  if (path.indexOf(".sub") >= 0)
+    path = "/DATA/FZSUB/" + filename;
+  else if(path.indexOf(".xml") >= 0)
+    path = "/DATA/URH/" + filename;
+  else path = "/DATA/" + filename;
+
   if (!index) {
     logmessage = "Upload Start: " + String(filename);
-    request->_tempFile = SD.open("/URH/" + filename, "w");
+    request->_tempFile = SD.open(path, "w");
   }
-
   if (len) {
     request->_tempFile.write(data, len);
     logmessage = "Writing file: " + String(filename) + " index=" + String(index) + " len=" + String(len);
   }
-
   if (final) {
     logmessage = "Upload Complete: " + String(filename) + ",size: " + String(index + len);
     request->_tempFile.close();
@@ -177,12 +188,10 @@ void handleUploadSD(AsyncWebServerRequest *request, String filename, size_t inde
     logmessage = "Upload Start: " + String(filename);
     request->_tempFile = SD.open("/" + filename, "w");
   }
-
   if (len) {
     request->_tempFile.write(data, len);
     logmessage = "Writing file: " + String(filename) + " index=" + String(index) + " len=" + String(len);
   }
-
   if (final) {
     logmessage = "Upload Complete: " + String(filename) + ",size: " + String(index + len);
     request->_tempFile.close();
@@ -190,12 +199,12 @@ void handleUploadSD(AsyncWebServerRequest *request, String filename, size_t inde
 
     TarUnpacker *TARUnpacker = new TarUnpacker();
 
-    TARUnpacker->haltOnError( true ); // stop on fail (manual restart/reset required)
-    TARUnpacker->setTarVerify( true ); // true = enables health checks but slows down the overall process
-    TARUnpacker->setupFSCallbacks( targzTotalBytesFn, targzFreeBytesFn ); // prevent the partition from exploding, recommended
-    TARUnpacker->setTarProgressCallback( BaseUnpacker::defaultProgressCallback ); // prints the untarring progress for each individual file
-    TARUnpacker->setTarStatusProgressCallback( BaseUnpacker::defaultTarStatusProgressCallback ); // print the filenames as they're expanded
-    TARUnpacker->setTarMessageCallback( BaseUnpacker::targzPrintLoggerCallback ); // tar log verbosity
+    TARUnpacker->haltOnError(true);   // stop on fail (manual restart/reset required)
+    TARUnpacker->setTarVerify(true);  // true = enables health checks but slows down the overall process
+    TARUnpacker->setupFSCallbacks(targzTotalBytesFn, targzFreeBytesFn);         // prevent the partition from exploding, recommended
+    TARUnpacker->setTarProgressCallback(BaseUnpacker::defaultProgressCallback); // prints the untarring progress for each individual file
+    TARUnpacker->setTarStatusProgressCallback(BaseUnpacker::defaultTarStatusProgressCallback); // print the filenames as they're expanded
+    TARUnpacker->setTarMessageCallback(BaseUnpacker::targzPrintLoggerCallback); // tar log verbosity
 
     if( !TARUnpacker->tarExpander(tarGzFS, "/HTML.tar", tarGzFS, "/") ) {
       Serial.printf("tarExpander failed with return code #%d\n", TARUnpacker->tarGzGetError() );
@@ -205,7 +214,8 @@ void handleUploadSD(AsyncWebServerRequest *request, String filename, size_t inde
   }
 }
 
-void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels) {
+  // TODO: remove function
   deleteFile(SD, "/dir.txt");
 
   File root = fs.open(dirname);
@@ -217,10 +227,10 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
   }
 
   File file = root.openNextFile();
-  while(file){
+  while(file) {
     if(file.isDirectory()){
       appendFile(SD, "/dir.txt","  DIR : ", file.name());
-      if(levels){
+      if(levels) {
         listDir(fs, file.name(), levels -1);
       }
     } else {
@@ -234,9 +244,8 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
 }
 
 void appendFile(fs::FS &fs, const char * path, const char * message, String messagestring){
-
   logs = fs.open(path, FILE_APPEND);
-  if(!logs){
+  if(!logs) {
     return;
   }
   logs.print(message);
@@ -245,7 +254,6 @@ void appendFile(fs::FS &fs, const char * path, const char * message, String mess
 }
 
 void appendFileLong(fs::FS &fs, const char * path, unsigned long messagechar){
-
   logs = fs.open(path, FILE_APPEND);
   if(!logs){
     return;
@@ -254,12 +262,11 @@ void appendFileLong(fs::FS &fs, const char * path, unsigned long messagechar){
   logs.close();
 }
 
-void deleteFile(fs::FS &fs, const char * path){
+void deleteFile(fs::FS &fs, const char * path) {
   fs.remove(path);
 }
 
-void readFile(fs::FS &fs, String path){
-
+void readFile(fs::FS &fs, String path) {
   File file = fs.open(path);
   if(!file){
     return;
@@ -271,8 +278,7 @@ void readFile(fs::FS &fs, String path){
 }
 
 
-void removeDir(fs::FS &fs, const char * dirname){
-
+void removeDir(fs::FS &fs, const char * dirname) {
   File root = fs.open(dirname);
   if(!root){
     return;
@@ -280,7 +286,6 @@ void removeDir(fs::FS &fs, const char * dirname){
   if(!root.isDirectory()){
     return;
   }
-
   File file = root.openNextFile();
   while(file){   
     if(file.isDirectory()){
@@ -292,20 +297,18 @@ void removeDir(fs::FS &fs, const char * dirname){
   }
 }
 
-bool checkReceived(void){
-  
+bool checkReceived(void) {
   delay(1);
-  if (samplecount >= MIN_SAMPLE && micros()-lastTime >100000){
+  if (samplecount >= MIN_SAMPLE && micros()-lastTime > 100000) {
     detachInterrupt(MOD0_GDO2);
     detachInterrupt(MOD1_GDO2);
     return 1;
-  }else{
+  } else {
     return 0;
   }
 }
 
 void printReceived(){
-  
   Serial.print("Count=");
   Serial.println(samplecount);
   appendFile(SD, "/logs.txt", NULL, "<br>\n");
@@ -328,31 +331,22 @@ void printReceived(){
 void RECEIVE_ATTR receiver() {
   const long time = micros();
   const unsigned int duration = time - lastTime;
-
-  if (duration > 100000){
-    samplecount = 0;
-  }
-
-  if (duration >= 100){
-    sample[samplecount++] = duration;
-  }
-
-  if (samplecount>=samplesize){
+  if (duration > 100000) samplecount = 0;
+  if (duration >= 100) sample[samplecount++] = duration;
+  if (samplecount >= samplesize) {
     detachInterrupt(MOD0_GDO2);
     detachInterrupt(MOD1_GDO2);
     checkReceived();
   }
-
   if (mod == 0 && tmp_module == "2") {
     if (samplecount == 1 and digitalRead(MOD1_GDO2) != HIGH){
       samplecount = 0;
     }
   }
-  
   lastTime = time;
 }
 
-void enableReceive(){
+void enableReceive() {
   pinMode(MOD0_GDO2,INPUT);
   ELECHOUSE_cc1101.SetRx();
   samplecount = 0;
@@ -364,25 +358,21 @@ void enableReceive(){
 }
 
 void parse_data() {
-
   bindata_protocol = "";
   int data_begin_bits = 0;
   int data_end_bits = 0;
   int data_begin_pause = 0;
   int data_end_pause = 0;
   int data_count = 0;
-
   for (int c = 0; c<bindataprotocol.length(); c++){
     if (bindataprotocol.substring(c,c+4) == "bits"){
       data_count++;
     }
   }
-
   for (int d = 0; d<data_count; d++){
     data_begin_bits = bindataprotocol.indexOf("<message bits=", data_end_bits);
     data_end_bits = bindataprotocol.indexOf("decoding_index=", data_begin_bits+1);
     bindata_protocol += bindataprotocol.substring(data_begin_bits+15, data_end_bits-2);
-      
     data_begin_pause = bindataprotocol.indexOf("pause=", data_end_pause);
     data_end_pause = bindataprotocol.indexOf(" timestamp=", data_begin_pause+1);
     bindata_protocol += "[Pause: ";
@@ -404,7 +394,6 @@ void sendTeslaSignal(float freq, int module) {
   ELECHOUSE_cc1101.setMHZ(freq);
   ELECHOUSE_cc1101.setDeviation(0);
   ELECHOUSE_cc1101.SetTx();
-  
   for (uint8_t t=0; t<transmtesla; t++) {
     for (uint8_t i=0; i<messageLength; i++) sendByte(sequence[i]);
     digitalWrite(MOD0_GDO0, LOW);
@@ -414,14 +403,11 @@ void sendTeslaSignal(float freq, int module) {
 }
 
 void sendButtonSignal(int button) {
-  
   raw_rx = "0";
   if (buttonConfig[button].tesla) {
     sendTeslaSignal(buttonConfig[button].frequency, buttonConfig[button].module);
     return;
   }
-  Serial.println("It's a me!");
-  
   pinMode(MOD1_GDO0, OUTPUT);
   ELECHOUSE_cc1101.setModul(1);
   ELECHOUSE_cc1101.Init();
@@ -429,8 +415,6 @@ void sendButtonSignal(int button) {
   ELECHOUSE_cc1101.setMHZ(buttonConfig[button].frequency);
   ELECHOUSE_cc1101.setDeviation(buttonConfig[button].deviation);
   ELECHOUSE_cc1101.SetTx();
-
-  //int gdo0 = button == 0 ? MOD0_GDO0 : MOD1_GDO0;
 
   for (int t = 0; t < buttonConfig[button].transmissions; t++) {
       for (int i = 0; i < buttonConfig[button].signal_size; i++){
@@ -452,33 +436,91 @@ void sendByte(uint8_t dataByte) {
   }
 }
 
-void power_management(){
-  EEPROM.begin(eepromsize);
+void sendBits(int *buff, int length, int gdo0) {
+  for (int i = 0; i < length; i++) {
+    digitalWrite(gdo0, buff[i] < 0 ? LOW : HIGH);
+    delayMicroseconds(abs(buff[i]));
+  }
+  digitalWrite(gdo0, LOW);
+}
 
-  byte z = EEPROM.read(eepromsize-2);
-  if (digitalRead(BUTTON2) != LOW){
-    if (z == 1){
-      go_deep_sleep();
-    }
-      }else{
-    if (z == 0){
-      EEPROM.write(eepromsize-2, 1);
-      EEPROM.commit();
-      go_deep_sleep();
-    }else{
-      EEPROM.write(eepromsize-2, 0);
-      EEPROM.commit();
+void parseFZSubLine(char *line) {
+  // using pure C functions but works... :/
+  const char sep[2] = ":";
+  const char values_sep[2] = " ";
+  
+  char *key = strtok(line, sep);
+  char *value;
+
+  fzSubSignal.setted = true;  // TODO: set only if fz filetype is recognized
+  
+  if (key != NULL) {
+    value = strtok(NULL, sep);
+    if(!strcmp(key, "Version")) {
+      fzSubSignal.version = atoi(value);
+    } else if(!strcmp(key, "Frequency")) {
+      fzSubSignal.frequency = atof(value) / 1000000.0f;
+    } else if(!strcmp(key, "Preset")) {
+      fzSubSignal.modulation = 2;   // ASK/OOK; TODO: translate strings like: FuriHalSubGhzPresetOok270Async
+    } else if(!strcmp(key, "RAW_Data")) {
+      char *pulse = strtok(value, values_sep);
+      int i = fzSubSignal.size;          
+      while (pulse != NULL && i < FZ_SUB_MAX_SIZE) {
+        fzSubSignal.data[i] = atoi(pulse);
+        pulse = strtok(NULL, values_sep);
+        i++;
+      }
+      fzSubSignal.size = i;
     }
   }
 }
 
-void go_deep_sleep(){
+void loadFZSubSignal(String path) {
+  memset(&fzSubSignal, 0, sizeof(struct FZSubSignal));
+  File dataFile = SD.open(path, FILE_READ);
+  if (dataFile) {
+    char *buf = (char *) malloc(MAX_LINE_SIZE);
+    String line;
+    while (dataFile.available()) {
+      line = dataFile.readStringUntil('\n');  // \n character is discarded from buffer
+      line.toCharArray(buf, MAX_LINE_SIZE);
+      parseFZSubLine(buf);
+    }
+    Serial.print("FZ signal -> Freq:");
+    Serial.print(fzSubSignal.frequency);
+    Serial.print(", Mod:");
+    Serial.print(fzSubSignal.modulation);
+    Serial.print(", Size:");
+    Serial.print(fzSubSignal.size);
+    Serial.println(".");
+    dataFile.close();
+    free(buf);      
+  }
+}
+
+void power_management() {
+  EEPROM.begin(eepromsize);
+
+  byte z = EEPROM.read(eepromsize-2);
+  if (digitalRead(BUTTON2) != LOW && z == 1) {
+    go_deep_sleep();
+  } else if (z == 0) {
+    EEPROM.write(eepromsize-2, 1);
+    EEPROM.commit();
+    go_deep_sleep();
+  } else {
+    EEPROM.write(eepromsize-2, 0);
+    EEPROM.commit();
+  }
+}
+
+void go_deep_sleep() {
   Serial.println("Going to sleep now");
   ELECHOUSE_cc1101.setModul(0);
   ELECHOUSE_cc1101.goSleep();
   ELECHOUSE_cc1101.setModul(1);
   ELECHOUSE_cc1101.goSleep();
-  led_blink(5,250);
+  led_blink(5, 250);
   esp_deep_sleep_start();
 }
 
@@ -513,7 +555,7 @@ void setup() {
   pinMode(BUTTON2, INPUT);
 
   Serial.begin(SERIAL_BAUDRATE);
-  power_management();
+  //power_management();
 
   SPIFFS.begin(FORMAT_ON_FAIL);
 
@@ -537,13 +579,11 @@ void setup() {
     if(mode_new == 1) {
       WiFi.mode(WIFI_AP);
       WiFi.softAP(ssid_new.c_str(), password_new.c_str(),channel_new,8);
-    }
-    else if(mode_new == 2) {
+    } else if(mode_new == 2) {
       WiFi.mode(WIFI_STA);
       WiFi.begin(ssid_new.c_str(), password_new.c_str());
     } 
   }
-  
   delay(DELAY_BETWEEN_RETRANSMISSIONS);
 
   sdspi.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_SS);
@@ -563,7 +603,7 @@ void setup() {
     
     File root = fs.equals("spiffs") ? SPIFFS.open(path) : SD.open(path);
     if (!root || !root.isDirectory()) {
-        request->send(500);
+        request->send(HTTP_BAD_REQUEST);
     }
     File file = root.openNextFile();
     String name;
@@ -581,7 +621,6 @@ void setup() {
       file = root.openNextFile();
     }
     serializeJson(doc, response);
-    serializeJson(doc, Serial);
     doc.clear();
     request->send(HTTP_OK, "application/json", response);
   });
@@ -599,250 +638,120 @@ void setup() {
 
   controlserver.on("/setjammer", HTTP_POST, [](AsyncWebServerRequest *request){
     raw_rx = "0";
-    if (request->hasArg("configmodule")) {
-      jammerConfig.module = request->arg("module").toInt()-1;
-      jammerConfig.frequency = request->arg("frequency").toFloat();
-      jammerConfig.power = request->arg("powerjammer").toInt();
-      pinMode(jammerConfig.module == 0 ? MOD0_GDO0 : MOD1_GDO0 ,OUTPUT);
-      ELECHOUSE_cc1101.setModul(jammerConfig.module);
-      ELECHOUSE_cc1101.Init();
-      ELECHOUSE_cc1101.setModulation(2);
-      ELECHOUSE_cc1101.setMHZ(jammerConfig.frequency);
-      ELECHOUSE_cc1101.setPA(jammerConfig.power);
-      ELECHOUSE_cc1101.SetTx();
-      jammerConfig.active = true;
-      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Jammer OK\")</script>");
-    }  
+    if (request->hasArg("configmodule") && request->hasArg("turn")) {
+      if (request->arg("turn").equals("ON")) {
+        jammerConfig.module = request->arg("module").toInt()-1;
+        jammerConfig.frequency = request->arg("frequency").toFloat();
+        jammerConfig.power = request->arg("powerjammer").toInt();
+        pinMode(jammerConfig.module == 0 ? MOD0_GDO0 : MOD1_GDO0 ,OUTPUT);
+        ELECHOUSE_cc1101.setModul(jammerConfig.module);
+        ELECHOUSE_cc1101.Init();
+        ELECHOUSE_cc1101.setModulation(2);
+        ELECHOUSE_cc1101.setMHZ(jammerConfig.frequency);
+        ELECHOUSE_cc1101.setPA(jammerConfig.power);
+        ELECHOUSE_cc1101.SetTx();
+        jammerConfig.active = true;
+        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Jammer started!\")</script>");
+      } else if(request->arg("turn").equals("OFF")) {
+        jammerConfig.active = false;
+        ELECHOUSE_cc1101.setModul(jammerConfig.module);
+        ELECHOUSE_cc1101.setSidle();
+        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Jammer stopped.\")</script>");
+      } else {
+        request->send(HTTP_BAD_REQUEST);
+      };
+    } else request->send(HTTP_BAD_REQUEST);
   });
 
-  controlserver.on("/stopjammer", HTTP_POST, [](AsyncWebServerRequest *request){
-    jammerConfig.active = false;
-    request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Stop OK\")</script>");
-    ELECHOUSE_cc1101.setModul(0);
-    ELECHOUSE_cc1101.setSidle();
-    ELECHOUSE_cc1101.setModul(1);
-    ELECHOUSE_cc1101.setSidle();
-  });
-
-  controlserver.on("/settx", HTTP_POST, [](AsyncWebServerRequest *request){
+  controlserver.on("/transmit/raw", HTTP_POST, [](AsyncWebServerRequest *request) {
     raw_rx = "0";
-    tmp_module = request->arg("module");
-    tmp_frequency = request->arg("frequency");
-    transmit = request->arg("rawdata");
-    tmp_deviation = request->arg("deviation");
-    tmp_mod = request->arg("mod");
-    tmp_transmissions = request->arg("transmissions");
 
     if (request->hasArg("configmodule")) {
-      int counter=0;
+      int counter = 0;
       int pos = 0;
-      frequency = tmp_frequency.toFloat();
-      deviation = tmp_deviation.toFloat();
-      mod = tmp_mod.toInt();
-      transmissions = tmp_transmissions.toInt();
+      String rawdata = request->arg("rawdata");
+      int module = request->arg("module").toInt() - 1;
+      float frequency = request->arg("frequency").toFloat();
+      float deviation = request->arg("deviation").toFloat();
+      int modulation = request->arg("mod").toInt();
+      int transmissions = request->arg("transmissions").toInt();
 
-      for (int i = 0; i<transmit.length(); i++){
-        if (transmit.substring(i, i+1) == ","){
-          data_to_send[counter]=transmit.substring(pos, i).toInt();
+      for (int i = 0; i<rawdata.length(); i++) {
+        if (rawdata.substring(i, i+1) == ",") {
+          data_to_send[counter] = rawdata.substring(pos, i).toInt();
           pos = i+1;
           counter++;
         }
       }
-
-      if (tmp_module == "1") {
-        pinMode(MOD0_GDO0,OUTPUT);
-        ELECHOUSE_cc1101.setModul(0);
-        ELECHOUSE_cc1101.Init();
-        ELECHOUSE_cc1101.setModulation(mod);
-        ELECHOUSE_cc1101.setMHZ(frequency);
-        ELECHOUSE_cc1101.setDeviation(deviation);
-        ELECHOUSE_cc1101.SetTx();
-
-        for (int r = 0; r<transmissions; r++) {
-          for (int i = 0; i<counter; i+=2){
-            digitalWrite(MOD0_GDO0,HIGH);
-            delayMicroseconds(data_to_send[i]);
-            digitalWrite(MOD0_GDO0,LOW);
-            delayMicroseconds(data_to_send[i+1]);
-            Serial.print(data_to_send[i]);
-            Serial.print(",");
-          }
-          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
-        }        
+      if (module < 0 || module > 1) {
+        request->send(HTTP_BAD_REQUEST);
+        return;
       }
-
-      else if (tmp_module == "2") {
-        pinMode(MOD1_GDO0,OUTPUT);
-        ELECHOUSE_cc1101.setModul(1);
-        ELECHOUSE_cc1101.Init();
-        ELECHOUSE_cc1101.setModulation(mod);
-        ELECHOUSE_cc1101.setMHZ(frequency);
-        ELECHOUSE_cc1101.setDeviation(deviation);
-        ELECHOUSE_cc1101.SetTx();
-
-        for (int r = 0; r<transmissions; r++) {
-          for (int i = 0; i<counter; i+=2){
-            digitalWrite(MOD1_GDO0,HIGH);
-            delayMicroseconds(data_to_send[i]);
-            digitalWrite(MOD1_GDO0,LOW);
-            delayMicroseconds(data_to_send[i+1]);
-            Serial.print(data_to_send[i]);
-            Serial.print(",");
-          }
-          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
+      int gdo0 = module == 0 ? MOD0_GDO0 : MOD1_GDO0;
+      pinMode(gdo0, OUTPUT);
+      ELECHOUSE_cc1101.setModul(module);
+      ELECHOUSE_cc1101.Init();
+      ELECHOUSE_cc1101.setModulation(modulation);
+      ELECHOUSE_cc1101.setMHZ(frequency);
+      ELECHOUSE_cc1101.setDeviation(deviation);
+      ELECHOUSE_cc1101.SetTx();
+      for (int r = 0; r < transmissions; r++) {
+        for (int i = 0; i < counter; i++){
+          digitalWrite(gdo0, i%2 == 0 ? HIGH : LOW);
+          delayMicroseconds(data_to_send[i]);
+          Serial.print(data_to_send[i]);
+          Serial.print(",");
         }
-      }     
-       Serial.println();
-       request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
-       ELECHOUSE_cc1101.setSidle();
-    }
-  });
-
-  controlserver.on("/settxtesla", HTTP_POST, [](AsyncWebServerRequest *request){
-    raw_rx = "0";
-    tmp_frequency = request->arg("frequency");
-    if (request->hasArg("configmodule")) {
-      frequency = tmp_frequency.toFloat();
-      sendTeslaSignal(frequency, 0);
+        delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
+      }       
+      Serial.println();
       request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
       ELECHOUSE_cc1101.setSidle();
+    } else {
+      request->send(HTTP_BAD_REQUEST);
     }
   });
 
-  controlserver.on("/settxbinary", HTTP_POST, [](AsyncWebServerRequest *request){
+  controlserver.on("/transmit/tesla", HTTP_POST, [](AsyncWebServerRequest *request) {
     raw_rx = "0";
-    tmp_module = request->arg("module");
-    tmp_frequency = request->arg("frequency");
-    bindata = request->arg("binarydata");
-    tmp_deviation = request->arg("deviation");
-    tmp_mod = request->arg("mod");
-    tmp_samplepulse = request->arg("samplepulse");
-    tmp_transmissions = request->arg("transmissions");
-
     if (request->hasArg("configmodule")) {
-      int counter=0;
-      int pos = 0;
-      frequency = tmp_frequency.toFloat();
-      deviation = tmp_deviation.toFloat();
-      mod = tmp_mod.toInt();
-      samplepulse = tmp_samplepulse.toInt();
-      transmissions = tmp_transmissions.toInt();
+      float frequency = request->arg("frequency").toFloat();
+      sendTeslaSignal(frequency, 0);
+      ELECHOUSE_cc1101.setSidle();
+      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
+    }
+  });
 
-      for (int i=0; i<1000; i++){
-        data_to_send[i]=0;
+  controlserver.on("/transmit/binary", HTTP_POST, [](AsyncWebServerRequest *request) {
+    raw_rx = "0";
+    if (request->hasArg("configmodule")) {
+      float frequency = request->arg("frequency").toFloat();
+      int module = request->arg("module").toInt() - 1;
+      String bindata = request->arg("binarydata");
+      float deviation = request->arg("deviation").toFloat();
+      int mod = request->arg("mod").toInt();
+      int samplepulse = request->arg("samplepulse").toInt();
+      int transmissions = request->arg("transmissions").toInt();
+      
+      if (module < 0 || module > 1) {
+        request->send(HTTP_BAD_REQUEST);
+        return;
       }
-
+      for (int i = 0; i < BUFFER_MAX_SIZE; i++) data_to_send[i] = 0;
+      
+      Serial.println();
       bindata.replace(" ","");
       bindata.replace("\n","");
       bindata.replace("Pause:","");
-      int count_binconvert=0;
-      String lastbit_convert="1";
-      Serial.println("");
       Serial.println(bindata);
-
-      for (int i = 0; i<bindata.length()+1; i++){
-        if (lastbit_convert != bindata.substring(i, i+1)){
-          if (lastbit_convert == "1"){
-            lastbit_convert="0";
-          }else if (lastbit_convert == "0"){
-            lastbit_convert="1";
-          }
-          count_binconvert++;
-        }
-    
-        if (bindata.substring(i, i+1)=="["){
-          data_to_send[count_binconvert]= bindata.substring(i+1,bindata.indexOf("]",i)).toInt();
-          lastbit_convert="0";
-          i+= bindata.substring(i,bindata.indexOf("]",i)).length();
-        }else{
-          data_to_send[count_binconvert]+=samplepulse;
-        }
-      }
-
-      for (int i = 0; i<count_binconvert; i++){
-        Serial.print(data_to_send[i]);
-        Serial.print(",");
-      }
-
-      if (tmp_module == "1") {
-        pinMode(MOD0_GDO0,OUTPUT);
-        ELECHOUSE_cc1101.setModul(0);
-        ELECHOUSE_cc1101.Init();
-        ELECHOUSE_cc1101.setModulation(mod);
-        ELECHOUSE_cc1101.setMHZ(frequency);
-        ELECHOUSE_cc1101.setDeviation(deviation);
-        ELECHOUSE_cc1101.SetTx();
-
-        delay(1000);
-
-        for (int r = 0; r<transmissions; r++) {
-          for (int i = 0; i<count_binconvert; i+=2){
-            digitalWrite(MOD0_GDO0,HIGH);
-            delayMicroseconds(data_to_send[i]);
-            digitalWrite(MOD0_GDO0,LOW);
-            delayMicroseconds(data_to_send[i+1]);
-          }
-          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions    
-        }
-      }
-
-      else if (tmp_module == "2") {
-        pinMode(MOD1_GDO0,OUTPUT);
-        ELECHOUSE_cc1101.setModul(1);
-        ELECHOUSE_cc1101.Init();
-        ELECHOUSE_cc1101.setModulation(mod);
-        ELECHOUSE_cc1101.setMHZ(frequency);
-        ELECHOUSE_cc1101.setDeviation(deviation);
-        ELECHOUSE_cc1101.SetTx();  
-
-        delay(1000);
-
-        for (int r = 0; r<transmissions; r++) {
-          for (int i = 0; i<count_binconvert; i+=2){
-            digitalWrite(MOD1_GDO0,HIGH);
-            delayMicroseconds(data_to_send[i]);
-            digitalWrite(MOD1_GDO0,LOW);
-            delayMicroseconds(data_to_send[i+1]);
-          }
-          delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions    
-        }
-      }
-      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
-      ELECHOUSE_cc1101.setSidle();
-    }
-  });
-
-  controlserver.on("/settxprotocol", HTTP_POST, [](AsyncWebServerRequest *request){
-    raw_rx = "0";
-    tmp_frequency = request->arg("frequency");
-    tmp_deviation = request->arg("deviation");
-    tmp_xmlname = request->arg("xmlname");
-    tmp_mod = request->arg("mod");
-    tmp_samplepulse = request->arg("samplepulse");
-
-    bindata_protocol = "";
-    
-    if (request->hasArg("configmodule")) {
       
-      int counter=0;
-      int pos = 0;
-      frequency = tmp_frequency.toFloat();
-      deviation = tmp_deviation.toFloat();
-      mod = tmp_mod.toInt();
-      samplepulse = tmp_samplepulse.toInt();
-
-      for (int i=0; i<1000; i++){
-        data_to_send[i]=0;
-      }
-
-      readFile(SD, tmp_xmlname);
-      parse_data();
-
-      int count_binconvert=0;
+      int counter = 0;
+      int pos = 0;      
+      int count_binconvert = 0;
       String lastbit_convert="1";
-
-      for (int i = 0; i<bindata_protocol.length()+1; i++){
-        if (lastbit_convert != bindata_protocol.substring(i, i+1)){
+      
+      for (int i = 0; i < bindata.length()+1; i++) {
+        if (lastbit_convert != bindata.substring(i, i+1)) {
           if (lastbit_convert == "1") {
             lastbit_convert="0";
           } else if (lastbit_convert == "0") {
@@ -850,22 +759,79 @@ void setup() {
           }
           count_binconvert++;
         }
-    
+        if (bindata.substring(i, i+1)=="[") {
+          data_to_send[count_binconvert]= bindata.substring(i+1,bindata.indexOf("]",i)).toInt();
+          lastbit_convert="0";
+          i+= bindata.substring(i,bindata.indexOf("]",i)).length();
+        } else {
+          data_to_send[count_binconvert] += samplepulse;
+        }
+      }
+      for (int i = 0; i<count_binconvert; i++) {
+        Serial.print(data_to_send[i]);
+        Serial.print(",");
+      }
+      int gdo0 = module == 0 ? MOD0_GDO0 : MOD1_GDO0;
+
+      pinMode(gdo0, OUTPUT);
+      ELECHOUSE_cc1101.setModul(module);
+      ELECHOUSE_cc1101.Init();
+      ELECHOUSE_cc1101.setModulation(mod);
+      ELECHOUSE_cc1101.setMHZ(frequency);
+      ELECHOUSE_cc1101.setDeviation(deviation);
+      ELECHOUSE_cc1101.SetTx();
+      delay(1000);      
+      for (int r = 0; r<transmissions; r++) {
+        for (int i = 0; i<count_binconvert; i++){
+          digitalWrite(gdo0, i%2 == 0 ? HIGH : LOW);
+          delayMicroseconds(data_to_send[i]);
+        }
+        delay(DELAY_BETWEEN_RETRANSMISSIONS);
+      }
+      ELECHOUSE_cc1101.setSidle();
+      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
+    }
+  });
+
+  controlserver.on("/transmit/file/urh", HTTP_POST, [](AsyncWebServerRequest *request){
+    raw_rx = "0";
+    if (request->hasArg("configmodule")) {
+      int pos = 0;
+      float frequency = request->arg("frequency").toFloat();
+      float deviation = request->arg("deviation").toFloat();
+      int mod = request->arg("mod").toInt();
+      int samplepulse = request->arg("samplepulse").toInt();
+      String filepath = request->arg("filepath");
+      bindata_protocol = "";
+      for (int i=0; i<1000; i++){
+        data_to_send[i]=0;
+      }
+      readFile(SD, filepath);
+      parse_data();
+      int count_binconvert=0;
+      String lastbit_convert="1";
+      for (int i = 0; i < bindata_protocol.length()+1; i++) {
+        if (lastbit_convert != bindata_protocol.substring(i, i+1)) {
+          if (lastbit_convert == "1") {
+            lastbit_convert="0";
+          } else if (lastbit_convert == "0") {
+            lastbit_convert="1";
+          }
+          count_binconvert++;
+        }
         if (bindata_protocol.substring(i, i+1)=="["){
           data_to_send[count_binconvert]= bindata_protocol.substring(i+1,bindata_protocol.indexOf("]",i)).toInt();
           lastbit_convert="0";
           i+= bindata_protocol.substring(i,bindata_protocol.indexOf("]",i)).length();
-        }else{
+        } else {
           data_to_send[count_binconvert]+=samplepulse;
         }
       }
-
       Serial.println("Data to Send");
       for (int i = 0; i<count_binconvert; i++){
         Serial.print(data_to_send[i]);
         Serial.print(",");
       }
-
       pinMode(MOD0_GDO0,OUTPUT);
       ELECHOUSE_cc1101.setModul(0);
       ELECHOUSE_cc1101.Init();
@@ -873,19 +839,34 @@ void setup() {
       ELECHOUSE_cc1101.setMHZ(frequency);
       ELECHOUSE_cc1101.setDeviation(deviation);
       ELECHOUSE_cc1101.SetTx();
-
       delay(1000);
-
-      for (int i = 0; i<count_binconvert; i+=2){
-        digitalWrite(MOD0_GDO0,HIGH);
+      for (int i = 0; i<count_binconvert; i++){
+        digitalWrite(MOD0_GDO0, i%2 == 0 ? HIGH : LOW);
         delayMicroseconds(data_to_send[i]);
-        digitalWrite(MOD0_GDO0,LOW);
-        delayMicroseconds(data_to_send[i+1]);
       }
-     
-      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
       ELECHOUSE_cc1101.setSidle();
+      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
     }
+  });
+
+  controlserver.on("/transmit/file/fz", HTTP_POST, [](AsyncWebServerRequest *request){
+    raw_rx = "0";
+    if (request->hasArg("configmodule")) {
+      String filepath = request->arg("filepath");
+      loadFZSubSignal(filepath);
+      pinMode(MOD0_GDO0, OUTPUT);
+      ELECHOUSE_cc1101.setModul(0);
+      ELECHOUSE_cc1101.Init();
+      ELECHOUSE_cc1101.setModulation(fzSubSignal.modulation);
+      ELECHOUSE_cc1101.setMHZ(fzSubSignal.frequency);
+      ELECHOUSE_cc1101.setDeviation(0);
+      ELECHOUSE_cc1101.SetTx();
+      sendBits(fzSubSignal.data, fzSubSignal.size, MOD0_GDO0);
+      ELECHOUSE_cc1101.setSidle();
+      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
+    } else {
+      request->send(HTTP_BAD_REQUEST);
+    }    
   });
 
   controlserver.on("/setrx", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -901,34 +882,26 @@ void setup() {
       mod = tmp_mod.toInt();
       deviation = tmp_deviation.toFloat();
       datarate = tmp_datarate.toInt();
-
       if (tmp_module == "1") {
         ELECHOUSE_cc1101.setModul(0);
         ELECHOUSE_cc1101.Init();
-      }
-
-      else if (tmp_module == "2") {
+      } else if (tmp_module == "2") {
         ELECHOUSE_cc1101.setModul(1);
         ELECHOUSE_cc1101.Init();
-
         if(mod == 2) {
           ELECHOUSE_cc1101.setDcFilterOff(0);
         }
-
         if(mod == 0) {
           ELECHOUSE_cc1101.setDcFilterOff(1);
         }
       }
-
       ELECHOUSE_cc1101.setSyncMode(0);            // Combined sync-word qualifier mode. 0 = No preamble/sync. 1 = 16 sync word bits detected. 2 = 16/16 sync word bits detected. 3 = 30/32 sync word bits detected. 4 = No preamble/sync, carrier-sense above threshold. 5 = 15/16 + carrier-sense above threshold. 6 = 16/16 + carrier-sense above threshold. 7 = 30/32 + carrier-sense above threshold.
       ELECHOUSE_cc1101.setPktFormat(3);           // Format of RX and TX data. 0 = Normal mode, use FIFOs for RX and TX. 1 = Synchronous serial mode, Data in on GDO0 and data out on either of the GDOx pins. 2 = Random TX mode; sends random data using PN9 generator. Used for test. Works as normal mode, setting 0 (00), in RX. 3 = Asynchronous serial mode, Data in on GDO0 and data out on either of the GDOx pins.
-
       ELECHOUSE_cc1101.setModulation(mod);        // set modulation mode. 0 = 2-FSK, 1 = GFSK, 2 = ASK/OOK, 3 = 4-FSK, 4 = MSK.
       ELECHOUSE_cc1101.setRxBW(setrxbw);
       ELECHOUSE_cc1101.setMHZ(frequency);
       ELECHOUSE_cc1101.setDeviation(deviation);   // Set the Frequency deviation in kHz. Value from 1.58 to 380.85. Default is 47.60 kHz.
       ELECHOUSE_cc1101.setDRate(datarate);        // Set the Data Rate in kBaud. Value from 0.02 to 1621.83. Default is 99.97 kBaud!
-
       enableReceive();
       raw_rx = "1";
       request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"RX Config OK\")</script>");
@@ -941,52 +914,37 @@ void setup() {
     if (button < 0 || button > 1) 
       request->send(HTTP_BAD_REQUEST, "text/html", "Button value is not valid.");
     else {
-      for (int i = 0; i < sizeof(buttonConfig) / sizeof(struct buttonConfig); i++)
-        buttonConfig[i].tesla = false;
-      String rawdata = request->arg("rawdata");
-      buttonConfig[button].deviation = request->arg("deviation").toFloat();
-      buttonConfig[button].frequency = request->arg("frequency").toFloat();
-      buttonConfig[button].modulation = request->arg("mod").toInt();
-      buttonConfig[button].transmissions = request->arg("transmissions").toInt();
-      buttonConfig[button].setted = true;
-      buttonConfig[button].tesla = false;
-      int c = 0;
-      for (int i = 0; i < rawdata.length(); i++) {
-        if (rawdata.substring(i, i+1) == ","){
-          buttonConfig[button].data[c] = rawdata.substring(pos, i).toInt();
-          pos = i+1;
-          c++;
+      String setted = request->arg("set");
+      if (setted.equals("Set") && request->hasArg("tesla")) {
+        buttonConfig[button].setted = true;
+        buttonConfig[button].tesla = true;
+        buttonConfig[button].frequency = request->arg("frequency").toFloat();
+        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Asigned tesla signal to button\")</script>");
+      } else if (setted.equals("Set")) {
+        String rawdata = request->arg("rawdata");
+        buttonConfig[button].deviation = request->arg("deviation").toFloat();
+        buttonConfig[button].frequency = request->arg("frequency").toFloat();
+        buttonConfig[button].modulation = request->arg("mod").toInt();
+        buttonConfig[button].transmissions = request->arg("transmissions").toInt();
+        buttonConfig[button].setted = true;
+        buttonConfig[button].tesla = false;
+        int c = 0;
+        for (int i = 0; i < rawdata.length(); i++) {
+          if (rawdata.substring(i, i+1) == ","){
+            buttonConfig[button].data[c] = rawdata.substring(pos, i).toInt();
+            pos = i+1;
+            c++;
+          }
         }
+        buttonConfig[button].signal_size = c;
+        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Raw signal configured at button\")</script>");
+      } else {
+        buttonConfig[button].setted = false;
+        buttonConfig[button].tesla = false;
+        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Cleared button config\")</script>");
       }
-      buttonConfig[button].signal_size = c;
-      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Button Config OK\")</script>");
-    }
-  });
-
-  controlserver.on("/setbtntesla", HTTP_POST, [](AsyncWebServerRequest *request){
-    int button = request->arg("button").toInt() - 1;
-    raw_rx = "0";
-    if (button < 0 || button > 1) 
       request->send(HTTP_BAD_REQUEST, "text/html", "Button value is not valid.");
-    else {
-      buttonConfig[button].setted = true;
-      buttonConfig[button].frequency = request->arg("frequency").toFloat();
-      buttonConfig[button].tesla = true;
-      buttonConfig[button].module = 0;
-      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Button Config OK\")</script>");
     }
-    
-  });
-
-  controlserver.on("/stopbtntesla", HTTP_POST, [](AsyncWebServerRequest *request){
-    for (int i = 0; i < sizeof(buttonConfig) / sizeof(struct buttonConfig); i++) {
-      if (buttonConfig[i].tesla) {  // unset only buttons with tesla config
-        buttonConfig[i].tesla = false;
-        buttonConfig[i].setted = false;
-      }
-    }
-    request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Stop OK\")</script>");
-    ELECHOUSE_cc1101.setSidle(); 
   });
 
   controlserver.on("/viewlog", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1006,7 +964,7 @@ void setup() {
   controlserver.on("/delete", HTTP_GET, [](AsyncWebServerRequest *request){
     deleteFile(SD, "/logs.txt");
     request->send(200, "text/html", HTML_CSS_STYLING+ "<body onload=\"JavaScript:AutoRedirect()\">"
-    "<br><h2>File cleared!<br>You will be redirected in 5 seconds.</h2></body>" );
+    "<br><h2>File cleared!<br>You will be redirected in 5 seconds.</h2></body>");
     appendFile(SD, "/logs.txt","Viewlog:\n", "<br>\n");
   });
 
@@ -1045,8 +1003,6 @@ void setup() {
 }
 
 void signalanalyse(){
-  #define signalstorage 10
-
   int signalanz=0;
   int timingdelay[signalstorage];
   float pulse[signalstorage];
@@ -1064,72 +1020,62 @@ void signalanalyse(){
   for (int i = 1; i<samplecount; i++){
     signalsum+=sample[i];
   }
-
-  for (int p = 0; p<signalstorage; p++){
-
-  for (int i = 1; i<samplecount; i++){
-    if (p==0){
-      if (sample[i]<signaltimings[p*2]){
-        signaltimings[p*2]=sample[i];
+  for (int p = 0; p<signalstorage; p++) {
+    for (int i = 1; i<samplecount; i++) {
+      if (p==0){
+        if (sample[i]<signaltimings[p*2]){
+          signaltimings[p*2]=sample[i];
+        }
+      } else {
+        if (sample[i]<signaltimings[p*2] && sample[i]>signaltimings[p*2-1]){
+          signaltimings[p*2]=sample[i];
+        }
       }
-    } else {
-      if (sample[i]<signaltimings[p*2] && sample[i]>signaltimings[p*2-1]){
-        signaltimings[p*2]=sample[i];
+    }
+    for (int i = 1; i<samplecount; i++) {
+      if (sample[i]<signaltimings[p*2] + ERROR_TOLERANZ && sample[i]>signaltimings[p*2+1]) {
+        signaltimings[p*2+1]=sample[i];
       }
     }
-  }
-
-  for (int i = 1; i<samplecount; i++) {
-    if (sample[i]<signaltimings[p*2] + ERROR_TOLERANZ && sample[i]>signaltimings[p*2+1]) {
-      signaltimings[p*2+1]=sample[i];
+    for (int i = 1; i<samplecount; i++) {
+      if (sample[i]>=signaltimings[p*2] && sample[i]<=signaltimings[p*2+1]) {
+        signaltimingscount[p]++;
+        signaltimingssum[p]+=sample[i];
+      }
     }
-  }
-
-  for (int i = 1; i<samplecount; i++) {
-    if (sample[i]>=signaltimings[p*2] && sample[i]<=signaltimings[p*2+1]) {
-      signaltimingscount[p]++;
-      signaltimingssum[p]+=sample[i];
-    }
-  }
   }
   int firstsample = signaltimings[0];
-  
-  signalanz=signalstorage;
+  signalanz = signalstorage;
   for (int i = 0; i<signalstorage; i++) {
     if (signaltimingscount[i] == 0) {
       signalanz=i;
       i=signalstorage;
     }
   }
-
   for (int s=1; s<signalanz; s++){
-  for (int i=0; i<signalanz-s; i++){
-    if (signaltimingscount[i] < signaltimingscount[i+1]){
-      int temp1 = signaltimings[i*2];
-      int temp2 = signaltimings[i*2+1];
-      int temp3 = signaltimingssum[i];
-      int temp4 = signaltimingscount[i];
-      signaltimings[i*2] = signaltimings[(i+1)*2];
-      signaltimings[i*2+1] = signaltimings[(i+1)*2+1];
-      signaltimingssum[i] = signaltimingssum[i+1];
-      signaltimingscount[i] = signaltimingscount[i+1];
-      signaltimings[(i+1)*2] = temp1;
-      signaltimings[(i+1)*2+1] = temp2;
-      signaltimingssum[i+1] = temp3;
-      signaltimingscount[i+1] = temp4;
+    for (int i=0; i<signalanz-s; i++){
+      if (signaltimingscount[i] < signaltimingscount[i+1]){
+        int temp1 = signaltimings[i*2];
+        int temp2 = signaltimings[i*2+1];
+        int temp3 = signaltimingssum[i];
+        int temp4 = signaltimingscount[i];
+        signaltimings[i*2] = signaltimings[(i+1)*2];
+        signaltimings[i*2+1] = signaltimings[(i+1)*2+1];
+        signaltimingssum[i] = signaltimingssum[i+1];
+        signaltimingscount[i] = signaltimingscount[i+1];
+        signaltimings[(i+1)*2] = temp1;
+        signaltimings[(i+1)*2+1] = temp2;
+        signaltimingssum[i+1] = temp3;
+        signaltimingscount[i+1] = temp4;
+      }
     }
   }
-  }
-
   for (int i=0; i<signalanz; i++){
     timingdelay[i] = signaltimingssum[i]/signaltimingscount[i];
   }
-
   if (firstsample == sample[1] and firstsample < timingdelay[0]){
     sample[1] = timingdelay[0];
   }
-
-
   bool lastbin=0;
   for (int i=1; i<samplecount; i++){
     float r = (float)sample[i]/timingdelay[0];
@@ -1143,7 +1089,7 @@ void signalanalyse(){
       }else{
       lastbin=0;
     }
-      if (lastbin==0 && calculate>8){
+      if (lastbin == 0 && calculate > 8){
         Serial.print(" [Pause: ");
         Serial.print(sample[i]);
         Serial.println(" samples]");

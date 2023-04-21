@@ -16,10 +16,9 @@
         <li><a href='/'>Home</a></li>
         <li><a class='dropdown-arrow'>Config</a>
           <ul class='sub-menus'>
-            <li><a href='txconfig.html'>RAW TX Config</a></li>
-            <li><a href='txbinary.html'>Binary TX Config</a></li>
-            <li><a href='rxconfig.html'>RX Config</a></li>
-            <li><a href='btn3.html'>Button TX Config</a></li>
+            <li><a href='config/buttons.html'>Buttons</a></li>
+            <li><a href='config/rx.html'>RX</a></li>
+            <li><a href='config/wifi.html'>WiFi</a></li>
           </ul>
         </li>
         <li><a class='dropdown-arrow'>RX Log</a>
@@ -30,25 +29,25 @@
             <li><a href='cleanspiffs'>Clean SPIFFS</a></li>
           </ul>
         </li>
-        <li><a class='dropdown-arrow'>URH Protocol</a>
+        <li><a class='dropdown-arrow'>Transmit</a>
           <ul class='sub-menus'>
-            <li><a href='txprotocol.html'>TX Protocol</a></li>
-            <li><a href='listxmlfiles'>List Protocol</a></li>
-            <li><a href='uploadxmlfiles.html'>Upload Protocol</a></li>
+            <li><a href='transmit/txraw.html'>Raw</a></li>
+            <li><a href='transmit/txbinary.html'>Binary</a></li>
+            <li><a href='transmit/txtesla.html'>Tesla charger</a></li>
           </ul>
         </li>
-        <li><a class='dropdown-arrow'>Tesla Charge</a>
+        <li><a class='dropdown-arrow'>TX Files</a>
           <ul class='sub-menus'>
-            <li><a href='txtesla.html'>TX</a></li>
-            <li><a href='btnconfigtesla.html'>Button TX Config</a></li>
+            <li><a href='files/manage.html'>Manage</a></li>
+            <li><a href='files/urh.html'>URH</a></li>
+            <li><a href='files/fzsub.html'>FZ Sub</a></li>
           </ul>
         </li>
-        <li><a href='jammer.html'>Simple Jammer</a></li>
-        <li><a class='dropdown-arrow'>ECRF Config</a>
+        <li><a href='jammer.html'>Jammer</a></li>
+        <li><a class='dropdown-arrow'>OTA</a>
           <ul class='sub-menus'>
-            <li><a href='wificonfig.html'>WiFi Config</a></li>
-            <li><a href='update'>OTA Firmware</a></li>
-            <li><a href='updatesd.html'>OTA SD Files</a></li>
+            <li><a href='update'>Firmware</a></li>
+            <li><a href='updatesd.html'>SD Files</a></li>
           </ul>
         </li>
       </ul>
@@ -63,17 +62,14 @@
         </select>
       </label>
       <hr>
-      <p>Frequency: </p><textarea class="css-input-text" form="config" rows="1" cols="50" name="frequency"></textarea>
+      <p>Frequency (MHz): </p><textarea class="css-input-text" form="config" rows="1" cols="50" name="frequency">433.92</textarea>
       <hr>
-      <p>Power Jammer: </p><textarea class="css-input-text" form="config" rows="1" cols="50"
-        name="powerjammer"></textarea>
+      <p>Power Jammer: </p><textarea class="css-input-text" form="config" rows="1" cols="50"name="powerjammer">10</textarea>
       <hr>
       <INPUT type="radio" name="configmodule" value="2" hidden="1" checked="checked">
-      <INPUT class="button-submit" type="submit" value="Jammer">
-    </form>
+      <INPUT class="button-submit" type="submit" name="turn" value="ON">
     <hr>
-    <FORM action="/stopjammer" method="post" id="config" target="iframe">
-      <INPUT class="button-submit" type="submit" value="Stop">
+      <INPUT class="button-submit" type="submit" name="turn" value="OFF">
     </form>
     <br>
     <hr>

@@ -16,6 +16,9 @@
 #define BUFFER_MAX_SIZE 2000
 #define FORMAT_ON_FAIL true
 
+#define FZ_SUB_MAX_SIZE 4096  // should be suficient
+#define MAX_LINE_SIZE 4096
+
 #define SERIAL_BAUDRATE 38400
 #define DELAY_BETWEEN_RETRANSMISSIONS 2000
 
