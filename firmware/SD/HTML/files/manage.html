@@ -53,8 +53,10 @@
       </ul>
     </nav>
     <br>
-    <form method='POST' action='/upload' enctype='multipart/form-data'><input type='file' name='upload'><input
-        type='submit' value='Upload'>
+    <p>Upload TX files to SD card. Files can be Flipper zero .sub format or URH .xml.</p>
+    <form method='POST' action='/upload' enctype='multipart/form-data'>
+      <input type='file' name='upload' accept=".sub, .xml">
+      <input type='submit' value='Upload'>
     </form>
     <ul></ul>
     <br>
