@@ -500,17 +500,21 @@ void loadFZSubSignal(String path) {
 
 void power_management() {
   EEPROM.begin(eepromsize);
-
   byte z = EEPROM.read(eepromsize-2);
-  if (digitalRead(BUTTON2) != LOW && z == 1) {
-    go_deep_sleep();
-  } else if (z == 0) {
-    EEPROM.write(eepromsize-2, 1);
-    EEPROM.commit();
-    go_deep_sleep();
+
+  if (digitalRead(BUTTON2) != LOW) {
+    if (z == 1){
+      go_deep_sleep();
+    }
   } else {
-    EEPROM.write(eepromsize-2, 0);
-    EEPROM.commit();
+    if (z == 0) {
+      EEPROM.write(eepromsize-2, 1);
+      EEPROM.commit();
+      go_deep_sleep();
+    } else {
+      EEPROM.write(eepromsize-2, 0);
+      EEPROM.commit();
+    }
   }
 }
 
@@ -555,7 +559,7 @@ void setup() {
   pinMode(BUTTON2, INPUT);
 
   Serial.begin(SERIAL_BAUDRATE);
-  //power_management();
+  power_management();
 
   SPIFFS.begin(FORMAT_ON_FAIL);
 
@@ -593,10 +597,10 @@ void setup() {
   controlserver.serveStatic("/", SD, "/HTML/").setDefaultFile("index.html");
 
   controlserver.on("/files", HTTP_GET, [](AsyncWebServerRequest *request) {
-    StaticJsonDocument<2048> doc;
+    StaticJsonDocument<JSON_DOC_SIZE> doc;
     JsonArray array = doc.to<JsonArray>();
     
-    char response[2048];
+    char response[JSON_DOC_SIZE];
 
     String fs = request->arg("fs");
     String path = request->arg("path");
@@ -608,7 +612,7 @@ void setup() {
     File file = root.openNextFile();
     String name;
     while (file) {
-      name = file.name(); // necessary
+      name = file.name(); // copy value & avoid pointer corruption
       JsonObject jsonFileObject = array.createNestedObject();
       jsonFileObject["name"] = name;
       if (file.isDirectory()) {
