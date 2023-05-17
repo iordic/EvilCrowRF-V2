@@ -20,6 +20,7 @@
 #define signalstorage 10
 
 SPIClass sdspi(VSPI);
+enum modulations{FSK2, GFSK, ASK, FSK4, MSK, CUSTOM};
 
 // Wifi parameters
 const char* ssid = "Evil Crow RF v2";
@@ -113,6 +114,7 @@ struct FZSubSignal {
     int modulation;     // 2-FSK, GFSK, ASK, 4-FSK, MSK
     int te;
     int size;
+    byte preset_data[PRESET_DATA_SIZE];
     int data[FZ_SUB_MAX_SIZE];    
 } fzSubSignal;
 
@@ -423,7 +425,7 @@ void sendButtonSignal(int button) {
         Serial.print(buttonConfig[button].data[i]);
         Serial.print(",");
       }
-      delay(DELAY_BETWEEN_RETRANSMISSIONS); //Set this for the delay between retransmissions
+      delay(DELAY_BETWEEN_RETRANSMISSIONS); // Set this for the delay between retransmissions
     }
    Serial.println();
    ELECHOUSE_cc1101.setSidle();
@@ -451,8 +453,8 @@ void parseFZSubLine(char *line) {
   
   char *key = strtok(line, sep);
   char *value;
-
-  fzSubSignal.setted = true;  // TODO: set only if fz filetype is recognized
+  int i = 0;
+  //fzSubSignal.setted = true;  // TODO: set only if fz filetype is recognized
   
   if (key != NULL) {
     value = strtok(NULL, sep);
@@ -461,21 +463,58 @@ void parseFZSubLine(char *line) {
     } else if(!strcmp(key, "Frequency")) {
       fzSubSignal.frequency = atof(value) / 1000000.0f;
     } else if(!strcmp(key, "Preset")) {
-      fzSubSignal.modulation = 2;   // ASK/OOK; TODO: translate strings like: FuriHalSubGhzPresetOok270Async
-    } else if(!strcmp(key, "RAW_Data")) {
+      if (!strcmp(value, "FuriHalSubGhzPresetOok270Async") || !strcmp(value, "FuriHalSubGhzPresetOok650Async")) {
+        fzSubSignal.modulation = ASK;
+        fzSubSignal.setted = true;
+      } else if (!strcmp(value, "FuriHalSubGhzPresetCustom")) {
+        fzSubSignal.modulation = CUSTOM;
+      } else {
+        fzSubSignal.modulation = ASK;
+        fzSubSignal.setted = true;
+      }
+    } else if(!strcmp(key, "Custom_preset_data") && fzSubSignal.setted) {
+      i = 0;  // use it as counter now
+      char *hex_value = strtok(value, values_sep);
+      while (hex_value != NULL) {
+        fzSubSignal.preset_data[i] = strtoul(hex_value, NULL, 16);
+        hex_value = strtok(NULL, values_sep);
+      }
+      fzSubSignal.setted = true;     
+    } else if(!strcmp(key, "RAW_Data") && fzSubSignal.setted) {
       char *pulse = strtok(value, values_sep);
-      int i = fzSubSignal.size;          
+      i = 0;          
       while (pulse != NULL && i < FZ_SUB_MAX_SIZE) {
         fzSubSignal.data[i] = atoi(pulse);
         pulse = strtok(NULL, values_sep);
         i++;
       }
       fzSubSignal.size = i;
+      if (fzSubSignal.setted && fzSubSignal.frequency > 0) {
+        pinMode(MOD0_GDO0, OUTPUT);
+        ELECHOUSE_cc1101.setModul(0);
+        ELECHOUSE_cc1101.Init();
+        ELECHOUSE_cc1101.setMHZ(fzSubSignal.frequency);
+        if (fzSubSignal.modulation == CUSTOM) {
+          Serial.println("HIA");
+          byte register_address = 0, register_value = 0;
+          for (i = 0; i < PRESET_DATA_SIZE; i+=2) {
+            register_address = fzSubSignal.preset_data[i];
+            register_value = fzSubSignal.preset_data[i+1];
+            ELECHOUSE_cc1101.SpiWriteReg(register_address, register_value);
+          }
+        } else {
+          ELECHOUSE_cc1101.setModulation(fzSubSignal.modulation);
+          ELECHOUSE_cc1101.setDeviation(0);
+          ELECHOUSE_cc1101.SetTx();          
+        }
+        ELECHOUSE_cc1101.setModulation(ASK);
+        sendBits(fzSubSignal.data, fzSubSignal.size, MOD0_GDO0); 
+      }
     }
   }
 }
 
-void loadFZSubSignal(String path) {
+bool loadFZSubSignal(String path) {
   memset(&fzSubSignal, 0, sizeof(struct FZSubSignal));
   File dataFile = SD.open(path, FILE_READ);
   if (dataFile) {
@@ -486,7 +525,12 @@ void loadFZSubSignal(String path) {
       line.toCharArray(buf, MAX_LINE_SIZE);
       parseFZSubLine(buf);
     }
-    Serial.print("FZ signal -> Freq:");
+    if (!fzSubSignal.setted) {
+      Serial.print("Transmitting ");
+      Serial.print(path);
+      Serial.print("has failed. Check if file format is compatible.");
+    }
+    Serial.print("FZ transmitted signal -> Freq:");
     Serial.print(fzSubSignal.frequency);
     Serial.print(", Mod:");
     Serial.print(fzSubSignal.modulation);
@@ -495,6 +539,10 @@ void loadFZSubSignal(String path) {
     Serial.println(".");
     dataFile.close();
     free(buf);      
+  } else {
+    Serial.print("File '");
+    Serial.print(path);
+    Serial.print("' not found.");
   }
 }
 
@@ -857,7 +905,12 @@ void setup() {
     raw_rx = "0";
     if (request->hasArg("configmodule")) {
       String filepath = request->arg("filepath");
-      loadFZSubSignal(filepath);
+      if (loadFZSubSignal(filepath)) {
+        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
+      } else {
+        request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Transmission has failed.\")</script>");
+      }
+      /*
       pinMode(MOD0_GDO0, OUTPUT);
       ELECHOUSE_cc1101.setModul(0);
       ELECHOUSE_cc1101.Init();
@@ -867,7 +920,7 @@ void setup() {
       ELECHOUSE_cc1101.SetTx();
       sendBits(fzSubSignal.data, fzSubSignal.size, MOD0_GDO0);
       ELECHOUSE_cc1101.setSidle();
-      request->send(200, "text/html", HTML_CSS_STYLING + "<script>alert(\"Signal has been transmitted\")</script>");
+      */
     } else {
       request->send(HTTP_BAD_REQUEST);
     }    

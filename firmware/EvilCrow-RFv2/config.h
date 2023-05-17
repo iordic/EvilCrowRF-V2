@@ -16,7 +16,8 @@
 #define BUFFER_MAX_SIZE 2000
 #define FORMAT_ON_FAIL true
 
-#define FZ_SUB_MAX_SIZE 4096  // should be suficient
+#define FZ_SUB_MAX_SIZE 512  // bytes per line
+#define PRESET_DATA_SIZE 48
 #define MAX_LINE_SIZE 4096
 #define JSON_DOC_SIZE 4096
 
