@@ -1,5 +1,8 @@
 # EvilCrowRF-V2
 
+:warning: This is a personal unoficial modified fork from EvilCrowRF-v2 where i'm going to develop my own ideas.
+If you are looking for the official you can go [there](https://github.com/joelsernamoreno/EvilCrowRF-V2).
+
 ![EvilCrow](https://github.com/joelsernamoreno/EvilCrowRF-V2/blob/main/images/Logo1.png)
 
 **Idea, development and implementation:** Joel Serna (@JoelSernaMoreno).
@@ -95,31 +98,32 @@ The basic firmware allows to receive and transmit signals. You can configure the
 
 ## Installation
 
-1. Install esptool: sudo apt install esptool
-2. Install pyserial: sudo pip install pyserial
-3. Download and Install the Arduino IDE: https://www.arduino.cc/en/main/software
-4. Download Evil Crow RF V2 repository: git clone https://github.com/joelsernamoreno/EvilCrowRF-V2.git
-5. Download the ESPAsyncWebServer library in the Arduino library directory: git clone https://github.com/me-no-dev/ESPAsyncWebServer.git
-6. Download the AsyncElegantOTA library in the Arduino library directory: git clone https://github.com/ayushsharma82/AsyncElegantOTA.git
-7. Download the ESP32-targz library in the Arduino library directory: git clone https://github.com/tobozo/ESP32-targz.git
-8. Download the AsyncTCP library in the Arduino library directory: git clone https://github.com/me-no-dev/AsyncTCP.git
-9. Edit AsyncTCP/src/AsyncTCP.h and change the following:
+```
+git clone --recurse-submodules https://github.com/iordic/EvilCrowRF-V2.git
+```
+1. Download and install necessary files:
+	* Download and Install the Arduino IDE (Legacy IDE (1.8.X)): https://www.arduino.cc/en/main/software
+	* Install from Arduino library manager:
+		* **ESP32-targz** - *tobozo*
+		* **AsyncElegantOTA** - *Ayush Sharma*
+		* **RF24** - *TMRh20*
+	* Copy folders AsyncTCP/ & ESPAsyncWebServer/ from *firmware/libs/* into Arduino's libraries folder (*~/Arduino/libraries/*)
+	* Edit AsyncTCP/src/AsyncTCP.h and change the following: `#define CONFIG_ASYNC_TCP_USE_WDT 1 to #define CONFIG_ASYNC_TCP_USE_WDT 0`
 
-* #define CONFIG_ASYNC_TCP_USE_WDT 1 to #define CONFIG_ASYNC_TCP_USE_WDT 0 
+2. Board configuration:
+	1. File > Preferences > Locate the field "Additional Board Manager URLs:" Add "https://dl.espressif.com/dl/package_esp32_index.json" without quotes. Click "Ok"
+	2. Select Tools > Board > Boards Manager. Search for "esp32". Install "esp32 by Espressif system version 1.0.6". Click "Close".
+	3. Return to *Tools* dropdown and configure the device:
+		* Board - "ESP32 Dev Module".
+		* Flash Size - "4MB (32Mb)".
+		* CPU Frequency - "80MHz (WiFi/BT)".
+		* Flash Frequency - "40MHz"
+		* Flash Mode - "DIO"
 
-10. Open Arduino IDE
-11. Go to File - Preferences. Locate the field "Additional Board Manager URLs:" Add "https://dl.espressif.com/dl/package_esp32_index.json" without quotes. Click "Ok"
-12. Select Tools - Board - Boards Manager. Search for "esp32". Install "esp32 by Espressif system version 1.0.6". Click "Close".
-13. Open the EvilCrowRF-V2/firmware/v1.3.2/EvilCrow-RFv2/EvilCrow-RFv2.ino sketch
-14. Select Tools:
-    * Board - "ESP32 Dev Module".
-    * Flash Size - "4MB (32Mb)".
-    * CPU Frequency - "80MHz (WiFi/BT)".
-    * Flash Frequency - "40MHz"
-    * Flash Mode - "DIO"
-15. Upload the code to the Evil Crow RF V2 device
-16. Copy the EvilCrowRF-V2/firmware/v1.3.2/SD/HTML folder to a MicroSD card.
-17. Copy the EvilCrowRF-V2/firmware/v1.3.2/SD/URH folder to a MicroSD card.
+3. Upload code and execute:
+	1. Open the firmware/ecrfv2/ecrfv2.ino sketch
+	2. Upload the code to the Evil Crow RF V2 device
+	3. Copy the SD/ subfiles to MicroSD card root.
 
 ![SD](https://github.com/joelsernamoreno/EvilCrowRF-V2/blob/main/images/sd.png)
 

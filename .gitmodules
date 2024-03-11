@@ -1,0 +1,9 @@
+[submodule "firmware/libs/elechouse_cc1101"]
+	path = firmware/libs/elechouse_cc1101
+	url = https://github.com/LSatan/SmartRC-CC1101-Driver-Lib
+[submodule "firmware/libs/ESPAsyncWebServer"]
+	path = firmware/libs/ESPAsyncWebServer
+	url = https://github.com/me-no-dev/ESPAsyncWebServer
+[submodule "firmware/libs/AsyncTCP"]
+	path = firmware/libs/AsyncTCP
+	url = https://github.com/me-no-dev/AsyncTCP
